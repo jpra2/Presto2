@@ -27,12 +27,15 @@ class Msclassic_bif:
             primal_id = mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 10
+        self.loops = 1
         self.t = 10
         self.mi_w = 1.0
         self.mi_o = 1.3
         self.ro_w = 1.0
         self.ro_o = 0.9
+        self.gama_w = 1.0
+        self.gama_o = 1.0
+        self.gama_ = self.gama_w + self.gama_o
         self.set_k()
         self.set_fi()
         self.get_wells()
@@ -727,6 +730,7 @@ class Msclassic_bif:
         self.h = h
         self.V = V
         self.A = a
+        self.tz = tz
 
     def set_fi(self):
         fi = 0.3
@@ -789,6 +793,89 @@ class Msclassic_bif:
                         self.b[global_volume] = -self.set_q[index]
                     else:
                         self.b[global_volume] = self.set_q[index]
+
+            else:
+                index = self.wells_d.index(global_volume)
+                self.trans_fine.InsertGlobalValues(global_volume, [1.0], [global_volume])
+                self.b[global_volume] = self.set_p[index]
+
+        self.trans_fine.FillComplete()
+
+    def set_global_problem_gr_vf(self):
+
+        """
+        transmissibilidade da malha fina com gravidade _vf
+        """
+
+        self.gama = 1.0
+
+        std_map = Epetra.Map(len(self.all_fine_vols),0,comm)
+
+        self.trans_fine = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
+        self.b = Epetra.Vector(std_map)
+
+        for volume in self.all_fine_vols:
+
+            volume_centroid = mesh_topo_util.get_average_position([volume])
+            adj_volumes = mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            lamb_w_vol = mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+            lamb_o_vol = mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
+            global_volume = mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+
+            if global_volume not in self.wells_d:
+
+                soma = 0.0
+                soma2 = 0.0
+                soma3 = 0.0
+                temp_glob_adj = []
+                temp_k = []
+
+                for adj in adj_volumes:
+                    global_adj = mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                    adj_centroid = mesh_topo_util.get_average_position([adj])
+                    direction = adj_centroid - volume_centroid
+                    altura = adj_centroid[2]
+                    uni = self.unitary(direction)
+                    z = uni[2]
+                    kvol = np.dot(np.dot(kvol,uni),uni)
+                    kvol = kvol*(lamb_w_vol + lamb_o_vol)
+                    kadj = mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    kadj = np.dot(np.dot(kadj,uni),uni)
+                    lamb_w_adj = mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
+                    lamb_o_adj = mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
+                    kadj = kadj*(lamb_w_adj + lamb_o_adj)
+                    keq = self.kequiv(kvol, kadj)
+                    keq = keq*(np.dot(self.A, uni))/(np.dot(self.h, uni))
+
+                    if z == 1.0:
+                        keq2 = keq*self.gama_
+                        soma2 = soma2 + keq2
+                        soma3 = soma3 + (-keq2*(self.tz-altura))
+
+                    temp_glob_adj.append(global_adj)
+                    temp_k.append(keq)
+
+                    soma = soma + keq
+
+                soma2 = soma2*(self.tz-volume_centroid[2])
+                soma2 = -(soma2 + soma3)
+                soma = -1*soma
+                temp_k.append(soma)
+                temp_glob_adj.append(global_volume)
+                self.trans_fine.InsertGlobalValues(global_volume, temp_k, temp_glob_adj)
+
+                if global_volume in self.wells_n:
+                    index = self.wells_n.index(global_volume)
+                    tipo_de_poco = mb.tag_get_data(self.tipo_de_poco_tag, volume)[0][0]
+                    if tipo_de_poco == 1:
+                        self.b[global_volume] = -self.set_q[index] + soma2
+                    else:
+                        self.b[global_volume] = self.set_q[index] + soma2
+                else:
+                    self.b[global_volume] = soma2
+
+                kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
             else:
                 index = self.wells_d.index(global_volume)
@@ -970,7 +1057,8 @@ class Msclassic_bif:
         self.set_sat_in()
         self.set_lamb()
         #self.set_global_problem()
-        self.set_global_problem_vf()
+        #self.set_global_problem_vf()
+        self.set_global_problem_gr_vf()
         #self.calculate_prolongation_op_het()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))

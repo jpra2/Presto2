@@ -93,8 +93,6 @@ class MsClassic_mono:
                 pms = self.set_p[index]
                 self.mb.tag_set_data(self.pms_tag, volume, pms)
 
-
-
     def calculate_prolongation_op_het(self):
 
         self.ident_primal = []
@@ -350,6 +348,13 @@ class MsClassic_mono:
         self.wells_n_tag = mb.tag_get_handle("WELLS_N")
         self.wells_d_tag = mb.tag_get_handle("WELLS_D")
         self.pwf_tag = mb.tag_get_handle("PWF")
+
+    def erro(self):
+        for volume in self.all_fine_vols:
+            Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
+            Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
+            erro = abs(Pf - Pms)
+            self.mb.tag_set_data(self.err_tag, volume, erro)
 
     def get_wells(self):
         wells_d = []
@@ -763,6 +768,85 @@ class MsClassic_mono:
 
         self.trans_fine.FillComplete()
 
+    def set_global_problem_gr_vf(self):
+
+        """
+        transmissibilidade da malha fina com gravidade _vf
+        """
+
+        self.ro = 1.0
+        self.mi = 1.0
+        self.gama = 1.0
+
+        std_map = Epetra.Map(len(self.all_fine_vols),0,self.comm)
+
+        self.trans_fine = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
+        self.b = Epetra.Vector(std_map)
+
+        for volume in self.all_fine_vols:
+
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+
+            if global_volume not in self.wells_d:
+
+                soma = 0.0
+                soma2 = 0.0
+                soma3 = 0.0
+                temp_glob_adj = []
+                temp_k = []
+
+                for adj in adj_volumes:
+                    global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                    adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                    direction = adj_centroid - volume_centroid
+                    altura = adj_centroid[2]
+                    uni = self.unitary(direction)
+                    z = uni[2]
+                    kvol = np.dot(np.dot(kvol,uni),uni)
+                    kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    kadj = np.dot(np.dot(kadj,uni),uni)
+                    keq = self.kequiv(kvol, kadj)
+                    keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+
+                    if z == 1.0:
+                        keq2 = keq*self.gama
+                        soma2 = soma2 + keq2
+                        soma3 = soma3 + (-keq2*(self.tz-altura))
+
+                    temp_glob_adj.append(global_adj)
+                    temp_k.append(keq)
+
+                    soma = soma + keq
+
+                soma2 = soma2*(self.tz-volume_centroid[2])
+                soma2 = -(soma2 + soma3)
+                soma = -1*soma
+                temp_k.append(soma)
+                temp_glob_adj.append(global_volume)
+                self.trans_fine.InsertGlobalValues(global_volume, temp_k, temp_glob_adj)
+
+                if global_volume in self.wells_n:
+                    index = self.wells_n.index(global_volume)
+                    tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
+                    if tipo_de_poco == 1:
+                        self.b[global_volume] = -self.set_q[index] + soma2
+                    else:
+                        self.b[global_volume] = self.set_q[index] + soma2
+                else:
+                    self.b[global_volume] = soma2
+
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+
+            else:
+                index = self.wells_d.index(global_volume)
+                self.trans_fine.InsertGlobalValues(global_volume, [1.0], [global_volume])
+                self.b[global_volume] = self.set_p[index]
+
+        self.trans_fine.FillComplete()
+
     def set_global_problem_vf(self):
         self.ro = 1.0
         self.mi = 1.0
@@ -870,9 +954,10 @@ class MsClassic_mono:
 
     def run(self):
 
-        self.set_global_problem()
+        #self.set_global_problem()
         #self.set_global_problem_gr()
-        #self.set_global_problem_vf()
+        #self.set_global_problem_gr_vf()
+        self.set_global_problem_vf()
         self.calculate_prolongation_op_het()
         self.calculate_restriction_op()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
@@ -886,6 +971,7 @@ class MsClassic_mono:
         #self.Neuman_problem_4()
         self.calculate_pwf(self.pf_tag)
         self.calculate_p_end()
+        self.erro()
 
 
         self.mb.write_file('new_out_mono.vtk')
