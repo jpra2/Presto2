@@ -27,7 +27,7 @@ class Msclassic_bif:
             primal_id = mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 1
+        self.loops = 40
         self.t = 10
         self.mi_w = 1.0
         self.mi_o = 1.3
@@ -35,6 +35,11 @@ class Msclassic_bif:
         self.ro_o = 0.9
         self.gama_w = 1.0
         self.gama_o = 1.0
+        self.Swi = 0.2
+        self.Swc = 0.2
+        self.Sor = 0.2
+        self.nw = 4
+        self.no = 4
         self.gama_ = self.gama_w + self.gama_o
         self.set_k()
         self.set_fi()
@@ -208,63 +213,29 @@ class Msclassic_bif:
             print('\n')"""
 
     def calculate_sat(self):
+        lim = 0.00001
 
         for volume in self.all_fine_vols:
-            if volume in self.wells:
-                tipo_de_poco = mb.tag_get_data(self.tipo_de_poco_tag, volume)[0][0]
-                if tipo_de_poco == 1:
-                    continue
+            gid = mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            div = self.div_upwind_2(volume, self.pf_tag)
+            fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
+            sat1 = mb.tag_get_data(self.sat_tag, volume)[0][0]
+            sat = sat1 + div*(self.delta_t/(fi*self.V))
+            if abs(div) < lim or sat1 == (1 - self.Sor) or gid in self.wells_d:
+                continue
+                #sys.exit(0)
+            if sat < 0 or sat > (1 - self.Sor):
+                if sat < 0:
+                    sat = 0.0
                 else:
-                    div = self.div_upwind_2(volume, self.pf_tag)
-                    fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
-                    sat = mb.tag_get_data(self.sat_tag, volume)[0][0]
-                    sat1 = sat
-                    sat = sat1 + div*(self.delta_t/(fi*self.V))
-                    if sat < 0 or sat > 1:
-                        print('erro na saturacao')
-                        print('div')
-                        print(div)
-                        print('delta_t')
-                        print(self.delta_t)
-                        print('V')
-                        print(self.V)
-                        print('S')
-                        print(sat)
-                        print('sat1')
-                        print(sat1)
-                        print('fi')
-                        print(fi)
-                        print('\n')
-                        sys.exit(0)
-                    mb.tag_set_data(self.sat_tag, volume, sat)
-            else:
-                #div = self.div_upwind_1(volume, self.pf_tag)
-                div = self.div_upwind_2(volume, self.pf_tag)
-                fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
-                sat = mb.tag_get_data(self.sat_tag, volume)[0][0]
-                sat1 = sat
-                sat = sat1 + div*(self.delta_t/(fi*self.V))
-                if sat < 0 or sat > 1:
-                    print('erro na saturacao')
-                    print('div')
-                    print(div)
-                    print('delta_t')
-                    print(self.delta_t)
-                    print('V')
-                    print(self.V)
-                    print('S')
-                    print(sat)
-                    print('sat1')
-                    print(sat1)
-                    print('fi')
-                    print(fi)
-                    print('\n')
-                    sys.exit(0)
-                mb.tag_set_data(self.sat_tag, volume, sat)
+                    sat = 1 - self.Sor
+
+            mb.tag_set_data(self.sat_tag, volume, sat)
 
     def cfl(self, fi, qmax):
+        cfl = 1.0
 
-        self.delta_t = (fi*self.V)/qmax
+        self.delta_t = cfl*(fi*self.V)/qmax
 
     def create_tags(self):
         self.Pc2_tag = mb.tag_get_handle(
@@ -653,6 +624,14 @@ class Msclassic_bif:
 
         return pol
 
+    def pol_interp_2(self, S):
+
+        S_temp = (S - self.Swc)/(1 - self.Swc - self.Sor)
+        krw = (S_temp)**(self.nw)
+        kro = (1 - S_temp)**(self.no)
+
+        return krw, kro
+
     def pymultimat(self, A, B, nf):
 
         nf_map = Epetra.Map(nf, 0, comm)
@@ -981,6 +960,15 @@ class Msclassic_bif:
             mb.tag_set_data(self.lamb_w_tag, volume, lamb_w)
             mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
 
+    def set_lamb_2(self):
+        for volume in self.all_fine_vols:
+            S = mb.tag_get_data(self.sat_tag, volume)[0][0]
+            krw, kro = self.pol_interp_2(S)
+            lamb_w = krw/self.mi_w
+            lamb_o = kro/self.mi_o
+            mb.tag_set_data(self.lamb_w_tag, volume, lamb_w)
+            mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
+
     def set_Pc(self):
 
         for primal in self.primals:
@@ -1055,10 +1043,11 @@ class Msclassic_bif:
         loop = 0
 
         self.set_sat_in()
-        self.set_lamb()
+        #self.set_lamb()
+        self.set_lamb_2()
         #self.set_global_problem()
-        #self.set_global_problem_vf()
-        self.set_global_problem_gr_vf()
+        self.set_global_problem_vf()
+        #self.set_global_problem_gr_vf()
         #self.calculate_prolongation_op_het()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
