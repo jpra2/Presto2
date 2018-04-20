@@ -110,6 +110,15 @@ class Msclassic_bif:
 
         mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
 
+    def calculate_p_end(self):
+
+        for volume in self.wells:
+            global_volume = mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            if global_volume in self.wells_d:
+                index = self.wells_d.index(global_volume)
+                pms = self.set_p[index]
+                mb.tag_set_data(self.pms_tag, volume, pms)
+
     def calculate_prolongation_op_het(self):
 
         zeros = np.zeros(self.nf)
@@ -575,6 +584,143 @@ class Msclassic_bif:
 
         return c
 
+    def Neuman_problem_4(self):
+
+        colocation_points = mb.get_entities_by_type_and_tag(
+            0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
+
+        sets = []
+        for col in colocation_points:
+            #col = mb.get_entities_by_handle(col)[0]
+            sets.append(self.mb.get_entities_by_handle(col)[0])
+        sets = set(sets)
+
+        for primal in self.primals:
+
+            volumes_in_interface = []#v1
+            volumes_in_primal = []#v2
+            primal_id = mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            fine_elems_in_primal = mb.get_entities_by_handle(primal)
+            #setfine_elems_in_primal = set(fine_elems_in_primal)
+
+            for fine_elem in fine_elems_in_primal:
+
+                global_volume = mb.tag_get_data(self.global_id_tag, fine_elem, flat=True)[0]
+                volumes_in_primal.append(fine_elem)
+                adj_fine_elems = mesh_topo_util.get_bridge_adjacencies(fine_elem, 2, 3)
+
+                for adj in adj_fine_elems:
+                    fin_prim = mb.tag_get_data(self.fine_to_primal_tag, adj, flat=True)
+                    primal_adj = mb.tag_get_data(
+                        self.primal_id_tag, int(fin_prim), flat=True)[0]
+
+                    if primal_adj != primal_id:
+                        volumes_in_interface.append(adj)
+
+            volumes_in_primal.extend(volumes_in_interface)
+            id_map = dict(zip(volumes_in_primal, range(len(volumes_in_primal))))
+            std_map = Epetra.Map(len(volumes_in_primal), 0, comm)
+            b = Epetra.Vector(std_map)
+            A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+            dim = len(volumes_in_primal)
+            b_np = np.zeros(dim)
+            A_np = np.zeros((dim, dim))
+
+            for volume in volumes_in_primal:
+                global_volume = mb.tag_get_data(self.global_id_tag, volume)[0][0]
+                temp_id = []
+                temp_k = []
+                centroid_volume = mesh_topo_util.get_average_position([volume])
+                k_vol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                adj_vol = mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                lamb_w_vol = mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+                lamb_o_vol = mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
+
+                if volume in self.wells:
+                    tipo_de_prescricao = mb.tag_get_data(self.tipo_de_prescricao_tag, volume)[0][0]
+                    if tipo_de_prescricao == 0:
+                        valor_da_prescricao = mb.tag_get_data(self.valor_da_prescricao_tag, volume)[0][0]
+                        temp_k.append(1.0)
+                        temp_id.append(id_map[volume])
+                        b[id_map[volume]] = valor_da_prescricao
+                        b_np[id_map[volume]] = valor_da_prescricao
+
+                    else:
+                        soma = 0.0
+                        for adj in adj_vol:
+                            centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                            direction = centroid_adj - centroid_volume
+                            uni = self.unitary(direction)
+                            k_vol = np.dot(np.dot(k_vol,uni),uni)
+                            k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                            k_adj = np.dot(np.dot(k_adj,uni),uni)
+                            keq = self.kequiv(k_vol, k_adj)
+                            keq = keq/(np.dot(self.h2, uni))
+                            soma = soma + keq
+                            temp_k.append(keq)
+                            temp_id.append(id_map[adj])
+                        soma = -1*soma
+                        temp_k.append(soma)
+                        temp_id.append(id_map[volume])
+                        tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
+                        valor_da_prescricao = self.mb.tag_get_data(self.valor_da_prescricao_tag, volume)[0][0]
+                        if tipo_de_poco == 1:
+                            b[id_map[volume]] = -valor_da_prescricao
+                            b_np[id_map[volume]] = -valor_da_prescricao
+                        else:
+                            b[id_map[volume]] = valor_da_prescricao
+                            b_np[id_map[volume]] = valor_da_prescricao
+
+                elif volume in sets:
+                    temp_k.append(1.0)
+                    temp_id.append(id_map[volume])
+                    b[id_map[volume]] = self.mb.tag_get_data(self.pms_tag, volume)[0]
+                    b_np[id_map[volume]] = self.mb.tag_get_data(self.pms_tag, volume)[0]
+
+                elif volume in volumes_in_interface:
+                    for adj in adj_vol:
+                        fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, adj, flat=True)
+                        primal_adj = self.mb.tag_get_data(
+                            self.primal_id_tag, int(fin_prim), flat=True)[0]
+                        if primal_adj == primal_id:
+                            pms_adj = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
+                            pms_volume = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                            b[id_map[volume]] = pms_volume - pms_adj
+                            b_np[id_map[volume]] = pms_volume - pms_adj
+                            temp_k.append(1.0)
+                            temp_id.append(id_map[volume])
+                            temp_k.append(-1.0)
+                            temp_id.append(id_map[adj])
+
+                else:
+                    soma = 0.0
+                    for adj in adj_vol:
+                        centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                        direction = centroid_adj - centroid_volume
+                        uni = self.unitary(direction)
+                        k_vol = np.dot(np.dot(k_vol,uni),uni)
+                        k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                        k_adj = np.dot(np.dot(k_adj,uni),uni)
+                        keq = self.kequiv(k_vol, k_adj)
+                        keq = keq/(np.dot(self.h2, uni))
+                        soma = soma + keq
+                        temp_k.append(keq)
+                        temp_id.append(id_map[adj])
+                    soma = -1*soma
+                    temp_k.append(soma)
+                    temp_id.append(id_map[volume])
+
+                A.InsertGlobalValues(id_map[volume], temp_k, temp_id)
+                A_np[id_map[volume], temp_id] = temp_k[:]
+
+            x = self.solve_linear_problem(A, b, dim)
+            x_np = np.linalg.solve(A_np, b_np)
+
+            for i in range(len(volumes_in_primal) - len(volumes_in_interface)):
+                volume = volumes_in_primal[i]
+                self.mb.tag_set_data(self.p_tag, volume, x[i])
+                self.mb.tag_set_data(self.pms2_tag, volume, x_np[i])
+
     def pol_interp(self, S, x, y):
 
         """
@@ -710,6 +856,13 @@ class Msclassic_bif:
         self.V = V
         self.A = a
         self.tz = tz
+
+    def set_erro(self):
+        for volume in self.all_fine_vols:
+            Pf = mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
+            Pms = mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
+            erro = abs(Pf - Pms)/float(abs(Pf))
+            mb.tag_set_data(self.err_tag, volume, erro)
 
     def set_fi(self):
         fi = 0.3
@@ -1036,9 +1189,6 @@ class Msclassic_bif:
 
     def run(self):
 
-        print('loop 0')
-        print('\n')
-
         t_ = 0.0
         loop = 0
 
@@ -1048,52 +1198,53 @@ class Msclassic_bif:
         #self.set_global_problem()
         self.set_global_problem_vf()
         #self.set_global_problem_gr_vf()
-        #self.calculate_prolongation_op_het()
+        self.calculate_prolongation_op_het()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
-        self.solve_linear_problem_numpy()
+        #self.solve_linear_problem_numpy()
         qmax, fi = self.div_max_2(self.pf_tag)
-
-
         self.cfl(fi, qmax)
 
-
-        #Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
-        #Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
-        #self.Pc = self.solve_linear_problem(Tc, Qc, self.nc)
-        #self.set_Pc()
-        #self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
-        #mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
+        #calculo da pressao multiescala
+        Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
+        Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
+        self.Pc = self.solve_linear_problem(Tc, Qc, self.nc)
+        self.set_Pc()
+        self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
+        mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
+        self.calculate_p_end()
+        self.set_erro()
 
         mb.write_file('new_out_bif{0}.vtk'.format(loop))
 
-
+        """
         loop = 1
         t_ = t_ + self.delta_t
         while t_ <= self.t and loop <= self.loops:
-            print('loop {0}'.format(loop))
-            print('\n')
 
             self.calculate_sat()
-            self.set_lamb()
+            #self.set_lamb()
+            self.set_lamb_2()
             #self.set_global_problem()
             self.set_global_problem_vf()
-            #self.calculate_prolongation_op_het()
+            self.calculate_prolongation_op_het()
             self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
             mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
-            self.solve_linear_problem_numpy()
+            #self.solve_linear_problem_numpy()
             qmax, fi = self.div_max_2(self.pf_tag)
             self.cfl(fi, qmax)
-            print('delta_t')
-            print(self.delta_t)
-            print('\n')
-            #Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
-            #Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
-            #self.Pc = self.solve_linear_problem(Tc, Qc, self.nc)
-            #self.set_Pc()
-            #self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
-            #mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
+
+
+            Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
+            Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
+            self.Pc = self.solve_linear_problem(Tc, Qc, self.nc)
+            self.set_Pc()
+            self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
+            mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
+            self.calculate_p_end()
+            self.set_erro()
 
             mb.write_file('new_out_bif{0}.vtk'.format(loop))
             loop = loop+1
             t_ = t_ + self.delta_t
+        """

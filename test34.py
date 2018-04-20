@@ -23,6 +23,7 @@ class MsClassic_mono:
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
         self.get_wells()
         self.set_perm()
+        self.ro = 1.0
         self.mi = 1.0
 
         print('fim1')
@@ -91,7 +92,7 @@ class MsClassic_mono:
             if global_volume in self.wells_d:
                 index = self.wells_d.index(global_volume)
                 pms = self.set_p[index]
-                self.mb.tag_set_data(self.pms_tag, volume, pms)
+                self.Pms[global_volume] = pms
 
     def calculate_prolongation_op_het(self):
 
@@ -289,6 +290,10 @@ class MsClassic_mono:
                         "PF", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
 
+        self.pcorr_tag = mb.tag_get_handle(
+                        "P_CORR", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
         self.k_tag = mb.tag_get_handle(
                         "K", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
@@ -353,7 +358,7 @@ class MsClassic_mono:
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
             Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
-            erro = abs(Pf - Pms)
+            erro = abs(Pf - Pms)/float(abs(Pf))
             self.mb.tag_set_data(self.err_tag, volume, erro)
 
     def get_wells(self):
@@ -499,8 +504,9 @@ class MsClassic_mono:
                             k_vol = np.dot(np.dot(k_vol,uni),uni)
                             k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                             k_adj = np.dot(np.dot(k_adj,uni),uni)
+                            #keq = self.kequiv(k_vol, k_adj)
                             keq = self.kequiv(k_vol, k_adj)
-                            keq = keq/(np.dot(self.h2, uni))
+                            keq = keq*(np.dot(self.A, uni)*self.ro)/(self.mi*np.dot(self.h, uni))
                             soma = soma + keq
                             temp_k.append(keq)
                             temp_id.append(id_map[adj])
@@ -547,7 +553,8 @@ class MsClassic_mono:
                         k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                         k_adj = np.dot(np.dot(k_adj,uni),uni)
                         keq = self.kequiv(k_vol, k_adj)
-                        keq = keq/(np.dot(self.h2, uni))
+                        #keq = keq/(np.dot(self.h2, uni))
+                        keq = keq*(np.dot(self.A, uni)*self.ro)/(self.mi*np.dot(self.h, uni))
                         soma = soma + keq
                         temp_k.append(keq)
                         temp_id.append(id_map[adj])
@@ -563,7 +570,7 @@ class MsClassic_mono:
 
             for i in range(len(volumes_in_primal) - len(volumes_in_interface)):
                 volume = volumes_in_primal[i]
-                self.mb.tag_set_data(self.p_tag, volume, x[i])
+                self.mb.tag_set_data(self.pcorr_tag, volume, x[i])
                 self.mb.tag_set_data(self.pms2_tag, volume, x_np[i])
 
     def pymultimat(self, A, B, nf):
@@ -848,8 +855,6 @@ class MsClassic_mono:
         self.trans_fine.FillComplete()
 
     def set_global_problem_vf(self):
-        self.ro = 1.0
-        self.mi = 1.0
 
         std_map = Epetra.Map(len(self.all_fine_vols),0,self.comm)
 
@@ -956,8 +961,8 @@ class MsClassic_mono:
 
         #self.set_global_problem()
         #self.set_global_problem_gr()
-        #self.set_global_problem_gr_vf()
-        self.set_global_problem_vf()
+        self.set_global_problem_gr_vf()
+        #self.set_global_problem_vf()
         self.calculate_prolongation_op_het()
         self.calculate_restriction_op()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
@@ -967,10 +972,10 @@ class MsClassic_mono:
         self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
         self.set_Pc(self.Pc)
         self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
+        self.calculate_p_end()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
         #self.Neuman_problem_4()
         self.calculate_pwf(self.pf_tag)
-        self.calculate_p_end()
         self.erro()
 
 
