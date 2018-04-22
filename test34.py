@@ -25,6 +25,8 @@ class MsClassic_mono:
         self.set_perm()
         self.ro = 1.0
         self.mi = 1.0
+        self.nf = len(self.all_fine_vols)
+        self.nc = len(self.primals)
 
         print('fim1')
 
@@ -957,12 +959,65 @@ class MsClassic_mono:
 
         return uni
 
+    def write_b(self):
+
+        with open('b.txt', 'w') as arq:
+            for i in range(self.nf):
+                j = self.b[i]
+                arq.write(str(j))
+                arq.write('\n')
+
+    def write_op(self, trilOP, nf, nc):
+
+        OP = np.zeros((nf, nc))
+
+        for i in range(nf):
+            p = trilOP.ExtractGlobalRowCopy(i)
+            OP[i, p[1]] = p[0]
+            #print(sum(OP[i]))
+
+        with open('OP.txt', 'w') as arq:
+            for i in OP:
+                for j in i:
+                    arq.write(str(j))
+                    arq.write('\n')
+
+    def write_or(self, trilOR, nc, nf):
+
+        OR = np.zeros((nc, nf))
+
+        for i in range(nc):
+            p = trilOR.ExtractGlobalRowCopy(i)
+            OR[i, p[1]] = p[0]
+
+        with open('OR.txt', 'w') as arq:
+            for i in OR:
+                for j in i:
+                    arq.write(str(j))
+                    arq.write('\n')
+
+    def write_tf(self, trans_fine, nf):
+
+        Tf = np.zeros((nf, nf))
+
+        for i in range(nf):
+            p = trans_fine.ExtractGlobalRowCopy(i)
+            for j in range(len(p[1])):
+                Tf[i, p[1][j]] = p[0][j]
+            #Tf[i, p[1]] = p[0]
+
+        with open('Tf.txt', 'w') as arq:
+            for i in Tf:
+                for j in i:
+                    arq.write(str(j))
+                    arq.write('\n')
+
     def run(self):
 
         #self.set_global_problem()
         #self.set_global_problem_gr()
-        self.set_global_problem_gr_vf()
-        #self.set_global_problem_vf()
+        #self.set_global_problem_gr_vf()
+        self.set_global_problem_vf()
         self.calculate_prolongation_op_het()
         self.calculate_restriction_op()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
@@ -972,11 +1027,16 @@ class MsClassic_mono:
         self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
         self.set_Pc(self.Pc)
         self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
-        self.calculate_p_end()
+        #self.calculate_p_end()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
         #self.Neuman_problem_4()
         self.calculate_pwf(self.pf_tag)
-        self.erro()
+        #self.erro()
+
+        #self.write_tf(self.trans_fine, self.nf)
+        #self.write_op(self.trilOP, self.nf, self.nc)
+        #self.write_or(self.trilOR, self.nc, self.nf)
+        self.write_b()
 
 
         self.mb.write_file('new_out_mono.vtk')

@@ -739,6 +739,9 @@ class StructuredMultiscaleMesh:
 
         wells_set = self.mb.create_meshset()
 
+        for i in wells2:
+            print(i)
+
         for well in wells2:
             k = well[0]
             idx = k[0]
