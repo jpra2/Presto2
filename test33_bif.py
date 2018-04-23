@@ -232,14 +232,16 @@ class Msclassic_bif:
             sat = sat1 + div*(self.delta_t/(fi*self.V))
             if abs(div) < lim or sat1 == (1 - self.Sor) or gid in self.wells_d:
                 continue
-                #sys.exit(0)
-            if sat < 0 or sat > (1 - self.Sor):
-                if sat < 0:
-                    sat = 0.0
-                else:
-                    sat = 1 - self.Sor
 
-            mb.tag_set_data(self.sat_tag, volume, sat)
+            elif sat < 0 or sat > (1 - self.Sor):
+                print('Erro: saturacao invalida')
+                print('Saturacao: {0}'.format(sat))
+                print('div: {0}'.format(div))
+                print('gid: {0}'.format(gid))
+
+                sys.exit(0)
+            else:
+                 mb.tag_set_data(self.sat_tag, volume, sat)
 
     def cfl(self, fi, qmax):
         cfl = 1.0

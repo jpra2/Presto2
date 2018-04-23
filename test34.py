@@ -1031,12 +1031,12 @@ class MsClassic_mono:
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
         #self.Neuman_problem_4()
         self.calculate_pwf(self.pf_tag)
-        #self.erro()
+        self.erro()
 
         #self.write_tf(self.trans_fine, self.nf)
         #self.write_op(self.trilOP, self.nf, self.nc)
         #self.write_or(self.trilOR, self.nc, self.nf)
-        self.write_b()
+        #self.write_b()
 
 
         self.mb.write_file('new_out_mono.vtk')
