@@ -177,6 +177,104 @@ class MsClassic_mono:
 
         self.trilOP.FillComplete()
 
+    def calculate_prolongation_op_het_2(self):
+        """
+        coloca o valor 1 nos pocos de dirichlet
+        """
+        set_dirichlet = set()
+
+        self.ident_primal = []
+
+        for primal in self.primals:
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            self.ident_primal.append(primal_id)
+
+        self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
+
+        zeros = np.zeros(len(self.all_fine_vols))
+
+        self.nf = len(self.all_fine_vols)
+        self.nc = len(self.primals)
+
+        std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
+        self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
+
+        i = 0
+
+        my_pairs = set()
+
+        for collocation_point_set in self.sets:
+
+            i += 1
+
+            childs = self.mb.get_child_meshsets(collocation_point_set)
+            collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
+            primal_elem = self.mb.tag_get_data(self.fine_to_primal_tag, collocation_point,
+                                           flat=True)[0]
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
+
+            primal_id = self.ident_primal[primal_id]
+
+            support_vals_tag = self.mb.tag_get_handle(
+                "TMP_SUPPORT_VALS {0}".format(primal_id), 1, types.MB_TYPE_DOUBLE, True,
+                types.MB_TAG_SPARSE, default_value=0.0)
+
+            self.mb.tag_set_data(support_vals_tag, self.all_fine_vols, zeros)
+            self.mb.tag_set_data(support_vals_tag, collocation_point, 1.0)
+
+            for vol in childs:
+
+                elems_vol = self.mb.get_entities_by_handle(vol)
+                c_faces = self.mb.get_child_meshsets(vol)
+
+                for face in c_faces:
+                    elems_fac = self.mb.get_entities_by_handle(face)
+                    c_edges = self.mb.get_child_meshsets(face)
+
+                    for edge in c_edges:
+                        elems_edg = self.mb.get_entities_by_handle(edge)
+                        c_vertices = self.mb.get_child_meshsets(edge)
+                        # a partir desse ponto op de prolongamento eh preenchido
+                        self.calculate_local_problem_het(
+                            elems_edg, c_vertices, support_vals_tag, self.h2)
+
+                    self.calculate_local_problem_het(
+                        elems_fac, c_edges, support_vals_tag, self.h2)
+
+                   # print "support_val_tag" , mb.tag_get_data(support_vals_tag,elems_edg)
+                self.calculate_local_problem_het(
+                    elems_vol, c_faces, support_vals_tag, self.h2)
+
+
+                vals = self.mb.tag_get_data(support_vals_tag, elems_vol, flat=True)
+                gids = self.mb.tag_get_data(self.global_id_tag, elems_vol, flat=True)
+                primal_elems = self.mb.tag_get_data(self.fine_to_primal_tag, elems_vol,
+                                               flat=True)
+
+                id_gids = dict(zip(gids, elems_vol))
+
+                for val, gid in zip(vals, gids):
+                    if (gid, primal_id) not in my_pairs:
+                        if val == 0.0 or gid in set_dirichlet:
+                            pass
+                        elif gid in self.wells_d:
+                            volume = id_gids[gid]
+                            fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)
+                            primal_volume = self.mb.tag_get_data(
+                                self.primal_id_tag, int(fin_prim), flat=True)[0]
+                            primal_volume = self.ident_primal[primal_volume]
+                            if primal_volume != primal_id:
+                                pass
+                            else:
+                                self.trilOP.InsertGlobalValues([gid], [primal_id], 1.0)
+                                set_dirichlet.add(gid)
+                        else:
+                            self.trilOP.InsertGlobalValues([gid], [primal_id], val)
+
+                        my_pairs.add((gid, primal_id))
+
+        self.trilOP.FillComplete()
+
     def calculate_pwf(self, p_tag):
         lamb = 1.0
 
@@ -1019,6 +1117,18 @@ class MsClassic_mono:
         #self.set_global_problem_gr_vf()
         self.set_global_problem_vf()
         self.calculate_prolongation_op_het()
+        #self.calculate_prolongation_op_het_2()
+        """for i in range(self.nf):
+            p = self.trilOP.ExtractGlobalRowCopy(i)
+            #OP[i, p[1]] = p[0]
+            print('gid: {0}'.format(i))
+            if i in self.wells_d:
+                print('poco')
+            print('indices: {0}'.format(p[1]))
+            print('valores: {0}'.format(p[0]))
+            print('\n')
+        print(self.wells_d)"""
+
         self.calculate_restriction_op()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
@@ -1032,6 +1142,7 @@ class MsClassic_mono:
         #self.Neuman_problem_4()
         self.calculate_pwf(self.pf_tag)
         self.erro()
+
 
         #self.write_tf(self.trans_fine, self.nf)
         #self.write_op(self.trilOP, self.nf, self.nc)

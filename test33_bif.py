@@ -27,7 +27,7 @@ class Msclassic_bif:
             primal_id = mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 40
+        self.loops = 4
         self.t = 10
         self.mi_w = 1.0
         self.mi_o = 1.3
@@ -230,14 +230,20 @@ class Msclassic_bif:
             fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
             sat1 = mb.tag_get_data(self.sat_tag, volume)[0][0]
             sat = sat1 + div*(self.delta_t/(fi*self.V))
-            if abs(div) < lim or sat1 == (1 - self.Sor) or gid in self.wells_d:
+            if abs(div) < lim or sat1 == (1 - self.Sor):
                 continue
+
+            elif gid in self.wells_d:
+                tipo_de_poco = mb.tag_get_data(self.tipo_de_poco_tag, volume)[0][0]
+                if tipo_de_poco == 0:
+                    continue
 
             elif sat < 0 or sat > (1 - self.Sor):
                 print('Erro: saturacao invalida')
                 print('Saturacao: {0}'.format(sat))
                 print('div: {0}'.format(div))
                 print('gid: {0}'.format(gid))
+                print('delta_t: {0}'.format(self.delta_t))
 
                 sys.exit(0)
             else:
@@ -246,7 +252,7 @@ class Msclassic_bif:
     def cfl(self, fi, qmax):
         cfl = 1.0
 
-        self.delta_t = cfl*(fi*self.V)/qmax
+        self.delta_t = cfl*(fi*self.V)/float(qmax)
 
     def create_tags(self):
         self.Pc2_tag = mb.tag_get_handle(
@@ -399,6 +405,54 @@ class Msclassic_bif:
                 fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
 
         return q2, fi
+
+    def div_max_3(self, p_tag):
+        """
+        Calcula tambem a variacao do fluxo fracionario com a saturacao
+        """
+        lim = 0.00001
+        q2 = 0.0
+        fi = 0.0
+        fi2 = 0.0
+        for volume in self.all_fine_vols:
+            q = 0.0
+            pvol = mb.tag_get_data(p_tag, volume)[0][0]
+            adjs_vol = mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            volume_centroid = mesh_topo_util.get_average_position([volume])
+            global_volume = mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            lamb_w_vol = mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+            lamb_o_vol = mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
+            sat_vol = mb.tag_get_data(self.sat_tag, volume)[0][0]
+            fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
+            if fi > fi2:
+                fi2 = fi
+
+            for adj in adjs_vol:
+                padj = mb.tag_get_data(p_tag, adj)[0][0]
+                adj_centroid = mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                lamb_w_adj = mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
+                lamb_o_adj = mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
+                uni = self.unitary(direction)
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kvol = kvol*(lamb_w_vol + lamb_o_vol)
+                kadj = mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                kadj = kadj*(lamb_w_adj + lamb_o_adj)
+                keq = self.kequiv(kvol, kadj)
+                keq = keq*(np.dot(self.A, uni))/(np.dot(self.h, uni))
+                sat_adj = mb.tag_get_data(self.sat_tag, adj)[0][0]
+                if abs(sat_adj - sat_vol) < lim:
+                    continue
+                dfds = ((lamb_w_adj/(lamb_w_adj+lamb_o_adj)) - (lamb_w_vol/(lamb_w_vol+lamb_o_vol)))/float((sat_adj - sat_vol))
+                q = dfds*keq*(padj - pvol)
+                if abs(q) > q2:
+                    q2 = abs(q)
+                kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+
+
+        return q2, fi2
 
     def div_upwind_1(self, volume, p_tag):
 
@@ -1204,7 +1258,7 @@ class Msclassic_bif:
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
         #self.solve_linear_problem_numpy()
-        qmax, fi = self.div_max_2(self.pf_tag)
+        qmax, fi = self.div_max_3(self.pf_tag)
         self.cfl(fi, qmax)
 
         #calculo da pressao multiescala
@@ -1219,7 +1273,7 @@ class Msclassic_bif:
 
         mb.write_file('new_out_bif{0}.vtk'.format(loop))
 
-        """
+
         loop = 1
         t_ = t_ + self.delta_t
         while t_ <= self.t and loop <= self.loops:
@@ -1249,4 +1303,3 @@ class Msclassic_bif:
             mb.write_file('new_out_bif{0}.vtk'.format(loop))
             loop = loop+1
             t_ = t_ + self.delta_t
-        """
