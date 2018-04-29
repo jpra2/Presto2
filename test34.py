@@ -1051,6 +1051,54 @@ class MsClassic_mono:
 
         return x
 
+    def teste_numpy(self):
+        OP = np.zeros((self.nf, self.nc))
+
+        for i in range(self.nf):
+            p = self.trilOP.ExtractGlobalRowCopy(i)
+            OP[i, p[1]] = p[0]
+            #print(sum(OP[i]))
+
+        OR = np.zeros((self.nc, self.nf))
+
+        for i in range(self.nc):
+            p = self.trilOR.ExtractGlobalRowCopy(i)
+            OR[i, p[1]] = p[0]
+
+        Tf = np.zeros((self.nf, self.nf))
+
+        for i in range(self.nf):
+            p = self.trans_fine.ExtractGlobalRowCopy(i)
+            for j in range(len(p[1])):
+                Tf[i, p[1][j]] = p[0][j]
+
+        b = np.zeros(self.nf)
+
+        for i in range(self.nf):
+            b[i] = self.b[i]
+
+        Tc = np.dot(OR, np.dot(Tf, OP))
+
+        invTc = np.linalg.inv(Tc)
+
+        TfMs = np.dot(OP, np.dot(invTc, OR))
+        temp = np.zeros(self.nf)
+        for i in range(self.nf):
+            if i in self.wells_d:
+                TfMs[i,:] = temp.copy()
+                TfMs[i,i] = 1.0
+
+        with open('b.txt', 'w') as arq:
+            for j in b:
+                arq.write(str(j))
+                arq.write('\n')
+
+        with open('TfMs.txt', 'w') as arq:
+            for i in TfMs:
+                for j in i:
+                    arq.write(str(j))
+                    arq.write('\n')
+
     def unitary(self,l):
         uni = l/np.linalg.norm(l)
         uni = uni*uni
@@ -1112,13 +1160,17 @@ class MsClassic_mono:
 
     def run(self):
 
+
+
         #self.set_global_problem()
         #self.set_global_problem_gr()
         #self.set_global_problem_gr_vf()
         self.set_global_problem_vf()
-        self.calculate_prolongation_op_het()
-        #self.calculate_prolongation_op_het_2()
-        """for i in range(self.nf):
+        #self.calculate_prolongation_op_het()
+        self.calculate_prolongation_op_het_2()
+
+        """
+        for i in range(self.nf):
             p = self.trilOP.ExtractGlobalRowCopy(i)
             #OP[i, p[1]] = p[0]
             print('gid: {0}'.format(i))
@@ -1127,7 +1179,10 @@ class MsClassic_mono:
             print('indices: {0}'.format(p[1]))
             print('valores: {0}'.format(p[0]))
             print('\n')
-        print(self.wells_d)"""
+        print(self.wells_d)
+        """
+
+
 
         self.calculate_restriction_op()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
@@ -1142,6 +1197,7 @@ class MsClassic_mono:
         #self.Neuman_problem_4()
         self.calculate_pwf(self.pf_tag)
         self.erro()
+        self.teste_numpy()
 
 
         #self.write_tf(self.trans_fine, self.nf)
