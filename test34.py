@@ -19,6 +19,11 @@ class MsClassic_mono:
         self.primals = self.mb.get_entities_by_type_and_tag(
             self.root_set, types.MBENTITYSET, np.array([self.primal_id_tag]),
             np.array([None]))
+        self.ident_primal = []
+        for primal in self.primals:
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            self.ident_primal.append(primal_id)
+        self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
         self.sets = self.mb.get_entities_by_type_and_tag(
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
         self.get_wells()
@@ -33,27 +38,34 @@ class MsClassic_mono:
 
     def add_gr(self):
 
+        cont = 0
         for primal in self.primals:
+            volumes_in_interface = []
             soma = 0
             soma2 = 0
             soma3 = 0
             temp_glob_adj = []
             temp_k = []
-            p_grad_z = []
 
             fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
-            gids = self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True)
-            id_gids = dict(zip(gids, range(len(gids))))
-            std_map = Epetra.Map(len(fine_elems_in_primal), 0, self.comm)
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            gids_in_primal = list(self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True))
+            volumes_in_interface, id_gids = self.get_volumes_in_interfaces(primal_id, id_dict = True)
+            std_map = Epetra.Map(len(id_gids), 0, self.comm)
             A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
             b = Epetra.Vector(std_map)
+            print(len(id_gids))
+            A_np = np.zeros((len(id_gids), len(id_gids)))
+            b_np = np.zeros(len(id_gids))
 
             for volume in fine_elems_in_primal:
                 global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
                 if global_volume in self.wells_d:
                     index = self.wells_d.index(global_volume)
                     A.InsertGlobalValues(id_gids[global_volume], [1.0], [id_gids[global_volume]])
+                    A_np[id_gids[global_volume], id_gids[global_volume]] = 1.0
                     b[id_gids[global_volume]] = self.set_p[index]
+                    b_np[id_gids[global_volume]] = self.set_p[index]
                 else:
                     volume_centroid = self.mesh_topo_util.get_average_position([volume])
                     adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
@@ -76,34 +88,47 @@ class MsClassic_mono:
                             keq2 = keq*self.gama
                             soma2 = soma2 - keq2
                             soma3 = soma3 + (keq2*(self.tz-altura))
-                            temp_glob_adj.append(id_gids[global_volume])
-                            temp_k.append(-keq)
-                            soma = soma + keq
+                            print(altura)
+
+                        temp_glob_adj.append(id_gids[global_adj])
+                        temp_k.append(-keq)
+                        soma = soma + keq
 
                     soma2 = soma2*(self.tz-volume_centroid[2])
                     soma2 = -(soma2 + soma3)
                     temp_k.append(soma)
                     temp_glob_adj.append(id_gids[global_volume])
                     A.InsertGlobalValues(id_gids[global_volume], temp_k, temp_glob_adj)
+                    A_np[id_gids[global_volume], temp_glob_adj] = temp_k
 
                     if global_volume in self.wells_n:
                         index = self.wells_n.index(global_volume)
                         tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
                         if tipo_de_poco == 1:
                             b[id_gids[global_volume]] = self.set_q[index] + soma2
+                            b_np[id_gids[global_volume]] = self.set_q[index] + soma2
                         else:
                             b[id_gids[global_volume]] = -self.set_q[index] + soma2
+                            b_np[id_gids[global_volume]] = -self.set_q[index] + soma2
                     else:
                         b[id_gids[global_volume]] = soma2
+                        b_np[id_gids[global_volume]] = soma2
 
                 kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
             A.FillComplete()
-            soma = 0
-            soma2 = 0
-            soma3 = 0
-            print(A)
-            #x = self.solve_linear_problem(A, b, len(gids))
+            x = self.solve_linear_problem(A, b, len(id_gids))
+            x_np = np.linalg.solve(A_np, b_np)
+
+            for volume in fine_elems_in_primal:
+                global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                if global_volume in gids_in_primal:
+                    #mb.tag_set_data(tag_da_gravidade, volume, x[global_volume])
+                    pass
+            """if cont == 0:
+                print(x)
+                print(x_np)"""
+            cont += 1
 
     def calculate_local_problem_het(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
         std_map = Epetra.Map(len(elems), 0, self.comm)
@@ -173,18 +198,7 @@ class MsClassic_mono:
 
     def calculate_prolongation_op_het(self):
 
-        self.ident_primal = []
-
-        for primal in self.primals:
-            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
-            self.ident_primal.append(primal_id)
-
-        self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-
         zeros = np.zeros(len(self.all_fine_vols))
-
-        self.nf = len(self.all_fine_vols)
-        self.nc = len(self.primals)
 
         std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
         self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
@@ -535,6 +549,51 @@ class MsClassic_mono:
             Pms = self.mb.tag_get_data(self.pms2_tag, volume, flat = True)[0]
             erro = abs(Pf - Pms)/float(abs(Pf))
             self.mb.tag_set_data(self.err_tag, volume, erro)
+
+    def get_volumes_in_interfaces(self, primal_id, id_dict = False):
+        """
+        obtem uma lista com os elementos na interface de um primal e outra lista com
+        seus respectivos ids globais
+
+        se a flag primal_volumes == 1 retorna uma lista de elementos com os volumes do primal
+
+        se a flag id_dict == 1 retorna um dicionario local da seguinte maneira:
+        id_gids = dict(zip(gids_in_primal + gids_in_interface), range(len(gids_in_primal + gids_in_interface)))
+
+        """
+
+        volumes_in_interface = []
+        gids_in_interface = []
+        for primal in self.primals:
+            id_primal = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            if id_primal == primal_id:
+                fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+                gids_in_primal = list(self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True))
+
+                for volume in fine_elems_in_primal:
+                    global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                    adjs_volume = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+
+                    for adj in adjs_volume:
+                        fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, adj, flat=True)
+                        primal_adj = self.mb.tag_get_data(
+                            self.primal_id_tag, int(fin_prim), flat=True)[0]
+
+                        if primal_adj != primal_id:
+                            volumes_in_interface.append(adj)
+                            global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                            gids_in_interface.append(global_adj)
+
+                local_id = gids_in_primal + gids_in_interface
+                local_id = dict(zip(local_id, range(len(local_id))))
+
+                if id_dict == True:
+                    return volumes_in_interface, local_id
+                else:
+                    return volumes_in_interface
+
+            else:
+                continue
 
     def get_wells(self):
         wells_d = []
@@ -1237,12 +1296,12 @@ class MsClassic_mono:
 
     def run(self):
 
-        self.add_gr()
-        """
+        #self.add_gr()
+
         #self.set_global_problem()
         #self.set_global_problem_gr()
-        self.set_global_problem_gr_vf()
-        #self.set_global_problem_vf()
+        #self.set_global_problem_gr_vf()
+        self.set_global_problem_vf()
         #self.calculate_prolongation_op_het()
         self.calculate_prolongation_op_het_2()
         self.calculate_restriction_op()
@@ -1256,7 +1315,7 @@ class MsClassic_mono:
         #self.calculate_p_end()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
         self.Neuman_problem_4()
-        self.calculate_pwf(self.pf_tag)
+        #self.calculate_pwf(self.pf_tag)
         self.erro()
         #self.teste_numpy()
 
@@ -1267,4 +1326,4 @@ class MsClassic_mono:
         #self.write_b()
 
 
-        self.mb.write_file('new_out_mono.vtk')"""
+        self.mb.write_file('new_out_mono.vtk')
