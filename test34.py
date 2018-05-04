@@ -54,7 +54,7 @@ class MsClassic_mono:
             std_map = Epetra.Map(len(id_gids), 0, self.comm)
             A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
             b = Epetra.Vector(std_map)
-            print(len(id_gids))
+            #print(len(id_gids))
             A_np = np.zeros((len(id_gids), len(id_gids)))
             b_np = np.zeros(len(id_gids))
 
@@ -88,7 +88,7 @@ class MsClassic_mono:
                             keq2 = keq*self.gama
                             soma2 = soma2 - keq2
                             soma3 = soma3 + (keq2*(self.tz-altura))
-                            print(altura)
+                            #print(altura)
 
                         temp_glob_adj.append(id_gids[global_adj])
                         temp_k.append(-keq)
@@ -187,6 +187,202 @@ class MsClassic_mono:
 
         self.mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
 
+    def calculate_local_problem_het_2(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
+        std_map = Epetra.Map(len(elems), 0, self.comm)
+        linear_vals = np.arange(0, len(elems))
+        id_map = dict(zip(elems, linear_vals))
+        boundary_elms = set()
+
+        b = Epetra.Vector(std_map)
+        x = Epetra.Vector(std_map)
+
+        A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+
+        for ms in lesser_dim_meshsets:
+            lesser_dim_elems = self.mb.get_entities_by_handle(ms)
+            for elem in lesser_dim_elems:
+                if elem in boundary_elms:
+                    continue
+                boundary_elms.add(elem)
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+
+        for elem in (set(elems) ^ boundary_elms):
+            global_volume = self.mb.tag_get_data(self.global_id_tag, elem, flat=True)[0]
+            if global_volume in self.wells_d:
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+                continue
+            k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            centroid_elem = self.mesh_topo_util.get_average_position([elem])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(
+                np.asarray([elem]), 2, 3, 0)
+            values = []
+            ids = []
+            for adj in adj_volumes:
+                if adj in id_map:
+                    k_adj = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_elem
+                    uni = self.unitary(direction)
+                    k_elem = np.dot(np.dot(k_elem,uni),uni)
+                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    k_adj = np.dot(np.dot(k_adj,uni),uni)
+                    keq = self.kequiv(k_elem, k_adj)
+                    keq = keq*(np.dot(self.A, uni)*self.ro)/(self.mi*np.dot(self.h, uni))
+                    #keq = keq/(np.dot(h2, uni))
+                    values.append(keq)
+                    ids.append(id_map[adj])
+                    k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            values.append(-sum(values))
+            idx = id_map[elem]
+            ids.append(idx)
+            A.InsertGlobalValues(idx, values, ids)
+
+        A.FillComplete()
+
+        linearProblem = Epetra.LinearProblem(A, x, b)
+        solver = AztecOO.AztecOO(linearProblem)
+        # AZ_last, AZ_summary, AZ_warnings
+        solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
+        solver.Iterate(1000, 1e-9)
+
+        self.mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
+
+    def calculate_local_problem_het_3(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
+        std_map = Epetra.Map(len(elems), 0, self.comm)
+        linear_vals = np.arange(0, len(elems))
+        id_map = dict(zip(elems, linear_vals))
+        boundary_elms = set()
+
+        b = Epetra.Vector(std_map)
+        x = Epetra.Vector(std_map)
+
+        A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+
+        for ms in lesser_dim_meshsets:
+            lesser_dim_elems = self.mb.get_entities_by_handle(ms)
+            for elem in lesser_dim_elems:
+                if elem in boundary_elms:
+                    continue
+                boundary_elms.add(elem)
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+
+        for elem in (set(elems) ^ boundary_elms):
+            global_volume = self.mb.tag_get_data(self.global_id_tag, elem, flat=True)[0]
+            fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, elem, flat=True)
+            id_primal = self.mb.tag_get_data(
+                self.primal_id_tag, int(fin_prim), flat=True)[0]
+            if global_volume in self.wells_d:
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+                continue
+            k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            centroid_elem = self.mesh_topo_util.get_average_position([elem])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(
+                np.asarray([elem]), 2, 3, 0)
+            values = []
+            ids = []
+            for adj in adj_volumes:
+                if adj in id_map:
+                    k_adj = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_elem
+                    uni = self.unitary(direction)
+                    k_elem = np.dot(np.dot(k_elem,uni),uni)
+                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    k_adj = np.dot(np.dot(k_adj,uni),uni)
+                    keq = self.kequiv(k_elem, k_adj)
+                    keq = keq*(np.dot(self.A, uni)*self.ro)/(self.mi*np.dot(self.h, uni))
+                    #keq = keq/(np.dot(h2, uni))
+                    values.append(keq)
+                    ids.append(id_map[adj])
+                    k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            values.append(-sum(values))
+            idx = id_map[elem]
+            ids.append(idx)
+            A.InsertGlobalValues(idx, values, ids)
+
+        A.FillComplete()
+
+        linearProblem = Epetra.LinearProblem(A, x, b)
+        solver = AztecOO.AztecOO(linearProblem)
+        # AZ_last, AZ_summary, AZ_warnings
+        solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
+        solver.Iterate(1000, 1e-9)
+
+        self.mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
+
+    def calculate_local_problem_het_4(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
+        std_map = Epetra.Map(len(elems), 0, self.comm)
+        linear_vals = np.arange(0, len(elems))
+        id_map = dict(zip(elems, linear_vals))
+        boundary_elms = set()
+
+        b = Epetra.Vector(std_map)
+        x = Epetra.Vector(std_map)
+
+        A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+
+        for ms in lesser_dim_meshsets:
+            lesser_dim_elems = self.mb.get_entities_by_handle(ms)
+            for elem in lesser_dim_elems:
+                if elem in boundary_elms:
+                    continue
+                boundary_elms.add(elem)
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+
+        for elem in (set(elems) ^ boundary_elms):
+            global_volume = self.mb.tag_get_data(self.global_id_tag, elem, flat=True)[0]
+            valor = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+            if valor == 1.0:
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = valor
+                continue
+            k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            centroid_elem = self.mesh_topo_util.get_average_position([elem])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(
+                np.asarray([elem]), 2, 3, 0)
+            values = []
+            ids = []
+            for adj in adj_volumes:
+                if adj in id_map:
+                    k_adj = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_elem
+                    uni = self.unitary(direction)
+                    k_elem = np.dot(np.dot(k_elem,uni),uni)
+                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    k_adj = np.dot(np.dot(k_adj,uni),uni)
+                    keq = self.kequiv(k_elem, k_adj)
+                    keq = keq*(np.dot(self.A, uni)*self.ro)/(self.mi*np.dot(self.h, uni))
+                    #keq = keq/(np.dot(h2, uni))
+                    values.append(keq)
+                    ids.append(id_map[adj])
+                    k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            values.append(-sum(values))
+            idx = id_map[elem]
+            ids.append(idx)
+            A.InsertGlobalValues(idx, values, ids)
+
+        A.FillComplete()
+
+        linearProblem = Epetra.LinearProblem(A, x, b)
+        solver = AztecOO.AztecOO(linearProblem)
+        # AZ_last, AZ_summary, AZ_warnings
+        solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
+        solver.Iterate(1000, 1e-9)
+
+        self.mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
+
     def calculate_p_end(self):
 
         for volume in self.wells:
@@ -267,23 +463,8 @@ class MsClassic_mono:
         self.trilOP.FillComplete()
 
     def calculate_prolongation_op_het_2(self):
-        """
-        coloca o valor 1 nos pocos de dirichlet
-        """
-        set_dirichlet = set()
-
-        self.ident_primal = []
-
-        for primal in self.primals:
-            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
-            self.ident_primal.append(primal_id)
-
-        self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
 
         zeros = np.zeros(len(self.all_fine_vols))
-
-        self.nf = len(self.all_fine_vols)
-        self.nc = len(self.primals)
 
         std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
         self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
@@ -312,8 +493,16 @@ class MsClassic_mono:
             self.mb.tag_set_data(support_vals_tag, collocation_point, 1.0)
 
             for vol in childs:
-
                 elems_vol = self.mb.get_entities_by_handle(vol)
+
+                set_of_dirichlet = set()
+
+                for volume in (set(self.wells) & set(elems_vol)):
+                    global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                    if global_volume in self.wells_d:
+                        self.mb.tag_set_data(support_vals_tag, volume, 1.0)
+                        set_of_dirichlet.add(volume)
+
                 c_faces = self.mb.get_child_meshsets(vol)
 
                 for face in c_faces:
@@ -324,14 +513,14 @@ class MsClassic_mono:
                         elems_edg = self.mb.get_entities_by_handle(edge)
                         c_vertices = self.mb.get_child_meshsets(edge)
                         # a partir desse ponto op de prolongamento eh preenchido
-                        self.calculate_local_problem_het(
+                        self.calculate_local_problem_het_2(
                             elems_edg, c_vertices, support_vals_tag, self.h2)
 
-                    self.calculate_local_problem_het(
+                    self.calculate_local_problem_het_2(
                         elems_fac, c_edges, support_vals_tag, self.h2)
 
                    # print "support_val_tag" , mb.tag_get_data(support_vals_tag,elems_edg)
-                self.calculate_local_problem_het(
+                self.calculate_local_problem_het_2(
                     elems_vol, c_faces, support_vals_tag, self.h2)
 
 
@@ -340,23 +529,170 @@ class MsClassic_mono:
                 primal_elems = self.mb.tag_get_data(self.fine_to_primal_tag, elems_vol,
                                                flat=True)
 
-                id_gids = dict(zip(gids, elems_vol))
+                for val, gid in zip(vals, gids):
+                    if (gid, primal_id) not in my_pairs:
+                        if val == 0.0:
+                            pass
+                        else:
+                            self.trilOP.InsertGlobalValues([gid], [primal_id], val)
+
+                        my_pairs.add((gid, primal_id))
+
+        self.trilOP.FillComplete()
+
+    def calculate_prolongation_op_het_3(self):
+
+        zeros = np.zeros(len(self.all_fine_vols))
+
+        std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
+        self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
+
+        i = 0
+
+        my_pairs = set()
+
+        for collocation_point_set in self.sets:
+
+            i += 1
+
+            childs = self.mb.get_child_meshsets(collocation_point_set)
+            collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
+            primal_elem = self.mb.tag_get_data(self.fine_to_primal_tag, collocation_point,
+                                           flat=True)[0]
+            _primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
+
+            primal_id = self.ident_primal[_primal_id]
+
+            support_vals_tag = self.mb.tag_get_handle(
+                "TMP_SUPPORT_VALS {0}".format(primal_id), 1, types.MB_TYPE_DOUBLE, True,
+                types.MB_TAG_SPARSE, default_value=0.0)
+
+            self.mb.tag_set_data(support_vals_tag, self.all_fine_vols, zeros)
+            self.mb.tag_set_data(support_vals_tag, collocation_point, 1.0)
+
+            cont = 0
+            for vol in childs:
+                elems_vol = self.mb.get_entities_by_handle(vol)
+
+                for volume in (set(self.wells) & set(elems_vol)):
+                    global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                    fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)
+                    primal_volume = self.mb.tag_get_data(
+                        self.primal_id_tag, int(fin_prim), flat=True)[0]
+                    if global_volume in self.wells_d and primal_volume == _primal_id:
+                        self.mb.tag_set_data(support_vals_tag, volume, 1.0)
+
+                c_faces = self.mb.get_child_meshsets(vol)
+
+                for face in c_faces:
+                    elems_fac = self.mb.get_entities_by_handle(face)
+                    c_edges = self.mb.get_child_meshsets(face)
+
+                    for edge in c_edges:
+                        elems_edg = self.mb.get_entities_by_handle(edge)
+                        c_vertices = self.mb.get_child_meshsets(edge)
+                        # a partir desse ponto op de prolongamento eh preenchido
+                        self.calculate_local_problem_het_3(
+                            elems_edg, c_vertices, support_vals_tag, self.h2)
+
+                    self.calculate_local_problem_het_3(
+                        elems_fac, c_edges, support_vals_tag, self.h2)
+
+                   # print "support_val_tag" , mb.tag_get_data(support_vals_tag,elems_edg)
+                self.calculate_local_problem_het_3(
+                    elems_vol, c_faces, support_vals_tag, self.h2)
+
+
+                vals = self.mb.tag_get_data(support_vals_tag, elems_vol, flat=True)
+                gids = self.mb.tag_get_data(self.global_id_tag, elems_vol, flat=True)
+                primal_elems = self.mb.tag_get_data(self.fine_to_primal_tag, elems_vol,
+                                               flat=True)
 
                 for val, gid in zip(vals, gids):
                     if (gid, primal_id) not in my_pairs:
-                        if val == 0.0 or gid in set_dirichlet:
+                        if val == 0.0:
                             pass
-                        elif gid in self.wells_d:
-                            volume = id_gids[gid]
-                            fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)
-                            primal_volume = self.mb.tag_get_data(
-                                self.primal_id_tag, int(fin_prim), flat=True)[0]
-                            primal_volume = self.ident_primal[primal_volume]
-                            if primal_volume != primal_id:
-                                pass
-                            else:
-                                self.trilOP.InsertGlobalValues([gid], [primal_id], 1.0)
-                                set_dirichlet.add(gid)
+                        else:
+                            self.trilOP.InsertGlobalValues([gid], [primal_id], val)
+
+                        my_pairs.add((gid, primal_id))
+
+        self.trilOP.FillComplete()
+
+    def calculate_prolongation_op_het_4(self):
+
+        set_primals_wells_d = set([(0, 9), (9, 0), (9, 18), (18, 9), (8, 17), (17, 8), (17, 26), (26, 17)])
+
+        zeros = np.zeros(len(self.all_fine_vols))
+
+        std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
+        self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
+
+        i = 0
+
+        my_pairs = set()
+
+        for collocation_point_set in self.sets:
+
+            i += 1
+
+            childs = self.mb.get_child_meshsets(collocation_point_set)
+            collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
+            primal_elem = self.mb.tag_get_data(self.fine_to_primal_tag, collocation_point,
+                                           flat=True)[0]
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
+
+            primal_id = self.ident_primal[primal_id]
+
+            support_vals_tag = self.mb.tag_get_handle(
+                "TMP_SUPPORT_VALS {0}".format(primal_id), 1, types.MB_TYPE_DOUBLE, True,
+                types.MB_TAG_SPARSE, default_value=0.0)
+
+            self.mb.tag_set_data(support_vals_tag, self.all_fine_vols, zeros)
+            self.mb.tag_set_data(support_vals_tag, collocation_point, 1.0)
+
+            for vol in childs:
+                elems_vol = self.mb.get_entities_by_handle(vol)
+
+                for volume in (set(self.wells) & set(elems_vol)):
+                    global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                    fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)
+                    primal_volume = self.mb.tag_get_data(
+                        self.primal_id_tag, int(fin_prim), flat=True)[0]
+                    primal_volume = self.ident_primal[primal_volume]
+                    if (primal_id, primal_volume) in set_primals_wells_d or primal_id == primal_volume:
+                        self.mb.tag_set_data(support_vals_tag, volume, 1.0)
+
+                c_faces = self.mb.get_child_meshsets(vol)
+
+                for face in c_faces:
+                    elems_fac = self.mb.get_entities_by_handle(face)
+                    c_edges = self.mb.get_child_meshsets(face)
+
+                    for edge in c_edges:
+                        elems_edg = self.mb.get_entities_by_handle(edge)
+                        c_vertices = self.mb.get_child_meshsets(edge)
+                        # a partir desse ponto op de prolongamento eh preenchido
+                        self.calculate_local_problem_het_4(
+                            elems_edg, c_vertices, support_vals_tag, self.h2)
+
+                    self.calculate_local_problem_het_4(
+                        elems_fac, c_edges, support_vals_tag, self.h2)
+
+                   # print "support_val_tag" , mb.tag_get_data(support_vals_tag,elems_edg)
+                self.calculate_local_problem_het_4(
+                    elems_vol, c_faces, support_vals_tag, self.h2)
+
+
+                vals = self.mb.tag_get_data(support_vals_tag, elems_vol, flat=True)
+                gids = self.mb.tag_get_data(self.global_id_tag, elems_vol, flat=True)
+                primal_elems = self.mb.tag_get_data(self.fine_to_primal_tag, elems_vol,
+                                               flat=True)
+
+                for val, gid in zip(vals, gids):
+                    if (gid, primal_id) not in my_pairs:
+                        if val == 0.0:
+                            pass
                         else:
                             self.trilOP.InsertGlobalValues([gid], [primal_id], val)
 
@@ -511,6 +847,10 @@ class MsClassic_mono:
                         "PMS2", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
 
+        self.pms3_tag = mb.tag_get_handle(
+                        "PMS2", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
         self.p_tag = mb.tag_get_handle(
                         "P", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
@@ -551,14 +891,14 @@ class MsClassic_mono:
             self.mb.tag_set_data(self.err_tag, volume, erro)
 
     def get_volumes_in_interfaces(self, primal_id, id_dict = False):
+
         """
-        obtem uma lista com os elementos na interface de um primal e outra lista com
-        seus respectivos ids globais
+        obtem uma lista com os elementos na interface de um primal
 
-        se a flag primal_volumes == 1 retorna uma lista de elementos com os volumes do primal
-
-        se a flag id_dict == 1 retorna um dicionario local da seguinte maneira:
+        se a flag id_dict == 1 retorna um mapeamento local da seguinte maneira:
         id_gids = dict(zip(gids_in_primal + gids_in_interface), range(len(gids_in_primal + gids_in_interface)))
+        gids_in_primal == lista contendo os ids globais dos volumes dentro do respectivo primal
+        gids_in_interface == lista contendo os ids globais dos volumes na interface do respectivo primal
 
         """
 
@@ -596,6 +936,15 @@ class MsClassic_mono:
                 continue
 
     def get_wells(self):
+        """
+        obtem:
+        self.wells == os elementos que contem os pocos
+        self.wells_d == lista contendo os ids globais dos volumes com pressao prescrita
+        self.wells_n == lista contendo os ids globais dos volumes com vazao prescrita
+        self.set_p == lista com os valores da pressao referente a self.wells_d
+        self.set_q == lista com os valores da vazao referente a self.wells_n
+
+        """
         wells_d = []
         wells_n = []
         set_p = []
@@ -627,12 +976,20 @@ class MsClassic_mono:
         self.set_q = set_q
 
     def kequiv(self,k1,k2):
+        """
+        obbtem o k equivalente entre k1 e k2
+
+        """
         #keq = ((2*k1*k2)/(h1*h2))/((k1/h1) + (k2/h2))
         keq = (2*k1*k2)/(k1+k2)
 
         return keq
 
     def modificar_matriz(self, A, rows, columns):
+        """
+        Modifica a matriz A para o tamanho (rows x columns)
+
+        """
 
         row_map = Epetra.Map(rows, 0, self.comm)
         col_map = Epetra.Map(columns, 0, self.comm)
@@ -650,6 +1007,10 @@ class MsClassic_mono:
         return C
 
     def modificar_vetor(self, v, nc):
+        """
+        Modifica o tamanho do vetor para nc
+
+        """
 
         std_map = Epetra.Map(nc, 0, self.comm)
         x = Epetra.Vector(std_map)
@@ -662,6 +1023,10 @@ class MsClassic_mono:
         return x
 
     def multimat_vector(self, A, row, b):
+        """
+        Multiplica a matriz A de ordem row x row pelo vetor de tamanho row
+
+        """
 
         std_map = Epetra.Map(row, 0, self.comm)
         c = Epetra.Vector(std_map)
@@ -671,6 +1036,14 @@ class MsClassic_mono:
         return c
 
     def Neuman_problem_4(self):
+        """
+        Recalcula as presssoes em cada volume da seguinte maneira:
+        primeiro verifica se os volumes estao nos pocos com pressao prescrita e sua pressao eh setada;
+        depois verifica qual eh o volume que eh vertice da malha dual e seta a pressao multiescala do mesmo;
+        depois calcula as pressoes no interior do volume primal com as condicoes prescritas acima
+        e com vazao prescrita na interface dada pelo gradiente da pressao multiescala
+
+        """
 
         colocation_points = self.mb.get_entities_by_type_and_tag(
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
@@ -808,6 +1181,10 @@ class MsClassic_mono:
                 self.mb.tag_set_data(self.pms2_tag, volume, x_np[i])
 
     def pymultimat(self, A, B, nf):
+        """
+        Multiplica a matriz A pela matriz B
+
+        """
 
         nf_map = Epetra.Map(nf, 0, self.comm)
 
@@ -820,6 +1197,10 @@ class MsClassic_mono:
         return C
 
     def read_structured(self):
+        """
+        Le os dados do arquivo structured
+
+        """
         with open('structured.cfg', 'r') as arq:
             text = arq.readlines()
 
@@ -870,6 +1251,10 @@ class MsClassic_mono:
         self.V = V
 
     def set_global_problem(self):
+        """
+        Obtem a matriz de transmissibilidade por diferencas finitas
+
+        """
 
         std_map = Epetra.Map(len(self.all_fine_vols),0,self.comm)
 
@@ -1012,7 +1397,7 @@ class MsClassic_mono:
     def set_global_problem_gr_vf(self):
 
         """
-        transmissibilidade da malha fina com gravidade _vf
+        transmissibilidade da malha fina com gravidade _volumes finitos
         """
 
         self.ro = 1.0
@@ -1089,6 +1474,10 @@ class MsClassic_mono:
         self.trans_fine.FillComplete()
 
     def set_global_problem_vf(self):
+        """
+        transmissibilidade da malha fina por volumes finitos
+
+        """
 
         std_map = Epetra.Map(len(self.all_fine_vols),0,self.comm)
 
@@ -1150,6 +1539,10 @@ class MsClassic_mono:
         self.trans_fine.FillComplete()
 
     def set_Pc(self, Pc):
+        """
+        seta a pressao nos volumes da malha grossa
+
+        """
 
         for primal in self.primals:
 
@@ -1164,6 +1557,10 @@ class MsClassic_mono:
                 np.repeat(value, len(fine_elems_in_primal)))
 
     def set_perm(self):
+        """
+        seta a permeabilidade dos volumes da malha fina
+
+        """
 
         perm_tensor = [1.0, 0.0, 0.0,
                         0.0, 1.0, 0.0,
@@ -1221,6 +1618,9 @@ class MsClassic_mono:
             if i in self.wells_d:
                 TfMs[i,:] = temp.copy()
                 TfMs[i,i] = 1.0
+        Pms = np.linalg.solve(TfMs, b)
+        mb.tag_set_data(self.pms3_tag, self.all_fine_vols, Pms)
+
 
         """with open('b.txt', 'w') as arq:
             for j in b:
@@ -1236,6 +1636,10 @@ class MsClassic_mono:
         #Pm
 
     def unitary(self,l):
+        """
+        obtem o vetor unitario da direcao de l
+
+        """
         uni = l/np.linalg.norm(l)
         uni = uni*uni
 
@@ -1303,7 +1707,9 @@ class MsClassic_mono:
         #self.set_global_problem_gr_vf()
         self.set_global_problem_vf()
         #self.calculate_prolongation_op_het()
-        self.calculate_prolongation_op_het_2()
+        #self.calculate_prolongation_op_het_2()
+        #self.calculate_prolongation_op_het_3()
+        self.calculate_prolongation_op_het_4()
         self.calculate_restriction_op()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
