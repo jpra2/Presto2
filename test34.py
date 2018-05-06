@@ -6,8 +6,12 @@ from PyTrilinos import Epetra, AztecOO, EpetraExt  # , Amesos
 import time
 import math
 
+
 class MsClassic_mono:
-    def __init__(self):
+    def __init__(self, ind = False):
+        """
+        ind = True quando se quer excluir da conta os volumes com pressao prescrita
+        """
         self.read_structured()
         self.comm = Epetra.PyComm()
         self.mb = core.Core()
@@ -34,7 +38,37 @@ class MsClassic_mono:
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
 
-        print('fim1')
+
+        if ind == False:
+            self.calculate_restriction_op()
+            self.run()
+
+        else:
+
+            self.neigh_wells_d = [] #volumes da malha fina vizinhos as pocos de pressao prescrita
+            self.elems_wells_d = [] #elementos com pressao prescrita
+            for volume in self.wells:
+
+                global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                if global_volume in self.wells_d:
+
+                    self.elems_wells_d.append(volume)
+
+                    adjs_volume = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                    for adj in adjs_volume:
+
+                        global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                        if global_adj not in self.wells_d:
+
+                            self.neigh_wells_d.append(adj)
+
+            self.all_fine_vols_ic = set(self.all_fine_vols) - set(self.elems_wells_d) #volumes da malha fina que sao icognitas
+            gids_vols_ic = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols_ic, flat=True)
+            self.map_vols_ic = dict(zip(gids_vols_ic, range(len(gids_vols_ic))))
+            self.map_vols_ic_2 = dict(zip(range(len(gids_vols_ic)), gids_vols_ic))
+            self.nf_ic = len(self.all_fine_vols_ic)
+
+            self.run_2()
 
     def add_gr(self):
 
@@ -383,6 +417,63 @@ class MsClassic_mono:
 
         self.mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
 
+    def calculate_local_problem_het_5(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
+        std_map = Epetra.Map(len(elems), 0, self.comm)
+        linear_vals = np.arange(0, len(elems))
+        id_map = dict(zip(elems, linear_vals))
+        boundary_elms = set()
+
+        b = Epetra.Vector(std_map)
+        x = Epetra.Vector(std_map)
+
+        A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+
+        for ms in lesser_dim_meshsets:
+            lesser_dim_elems = self.mb.get_entities_by_handle(ms)
+            for elem in lesser_dim_elems:
+                if elem in boundary_elms:
+                    continue
+                boundary_elms.add(elem)
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+
+        for elem in (set(elems) ^ boundary_elms):
+            k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            centroid_elem = self.mesh_topo_util.get_average_position([elem])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(
+                np.asarray([elem]), 2, 3, 0)
+            values = []
+            ids = []
+            for adj in adj_volumes:
+                if adj in id_map:
+                    k_adj = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_elem
+                    uni = self.unitary(direction)
+                    k_elem = np.dot(np.dot(k_elem,uni),uni)
+                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    k_adj = np.dot(np.dot(k_adj,uni),uni)
+                    keq = self.kequiv(k_elem, k_adj)
+                    keq = keq/(np.dot(h2, uni))
+                    values.append(keq)
+                    ids.append(id_map[adj])
+                    k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            values.append(-sum(values))
+            idx = id_map[elem]
+            ids.append(idx)
+            A.InsertGlobalValues(idx, values, ids)
+
+        A.FillComplete()
+
+        linearProblem = Epetra.LinearProblem(A, x, b)
+        solver = AztecOO.AztecOO(linearProblem)
+        # AZ_last, AZ_summary, AZ_warnings
+        solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
+        solver.Iterate(1000, 1e-9)
+
+        self.mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
+
     def calculate_p_end(self):
 
         for volume in self.wells:
@@ -700,6 +791,76 @@ class MsClassic_mono:
 
         self.trilOP.FillComplete()
 
+    def calculate_prolongation_op_het_5(self):
+
+        zeros = np.zeros(len(self.all_fine_vols))
+
+        std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
+        self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
+
+        i = 0
+
+        my_pairs = set()
+
+        for collocation_point_set in self.sets:
+
+            i += 1
+
+            childs = self.mb.get_child_meshsets(collocation_point_set)
+            collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
+            primal_elem = self.mb.tag_get_data(self.fine_to_primal_tag, collocation_point,
+                                           flat=True)[0]
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
+
+            primal_id = self.ident_primal[primal_id]
+
+            support_vals_tag = self.mb.tag_get_handle(
+                "TMP_SUPPORT_VALS {0}".format(primal_id), 1, types.MB_TYPE_DOUBLE, True,
+                types.MB_TAG_SPARSE, default_value=0.0)
+
+            self.mb.tag_set_data(support_vals_tag, self.all_fine_vols, zeros)
+            self.mb.tag_set_data(support_vals_tag, collocation_point, 1.0)
+
+            for vol in childs:
+
+                elems_vol = self.mb.get_entities_by_handle(vol)
+                c_faces = self.mb.get_child_meshsets(vol)
+
+                for face in c_faces:
+                    elems_fac = self.mb.get_entities_by_handle(face)
+                    c_edges = self.mb.get_child_meshsets(face)
+
+                    for edge in c_edges:
+                        elems_edg = self.mb.get_entities_by_handle(edge)
+                        c_vertices = self.mb.get_child_meshsets(edge)
+                        # a partir desse ponto op de prolongamento eh preenchido
+                        self.calculate_local_problem_het(
+                            elems_edg, c_vertices, support_vals_tag, self.h2)
+
+                    self.calculate_local_problem_het(
+                        elems_fac, c_edges, support_vals_tag, self.h2)
+
+                   # print "support_val_tag" , mb.tag_get_data(support_vals_tag,elems_edg)
+                self.calculate_local_problem_het(
+                    elems_vol, c_faces, support_vals_tag, self.h2)
+
+
+                vals = self.mb.tag_get_data(support_vals_tag, elems_vol, flat=True)
+                gids = self.mb.tag_get_data(self.global_id_tag, elems_vol, flat=True)
+                primal_elems = self.mb.tag_get_data(self.fine_to_primal_tag, elems_vol,
+                                               flat=True)
+
+                for val, gid in zip(vals, gids):
+                    if (gid, primal_id) not in my_pairs:
+                        if val == 0.0:
+                            pass
+                        else:
+                            self.trilOP.InsertGlobalValues([gid], [primal_id], val)
+
+                        my_pairs.add((gid, primal_id))
+
+        self.trilOP.FillComplete()
+
     def calculate_pwf(self, p_tag):
         lamb = 1.0
 
@@ -773,7 +934,7 @@ class MsClassic_mono:
         for primal in self.primals:
 
             primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
-            primal_id = self.ident_primal[primal_id]
+            #primal_id = self.ident_primal[primal_id]
             restriction_tag = self.mb.tag_get_handle(
                             "RESTRICTION_PRIMAL {0}".format(primal_id), 1, types.MB_TYPE_INTEGER,
                             True, types.MB_TAG_SPARSE)
@@ -794,6 +955,42 @@ class MsClassic_mono:
 
         """for i in range(len(primals)):
             p = trilOR.ExtractGlobalRowCopy(i)
+            print(p[0])
+            print(p[1])
+            print('\n')"""
+
+    def calculate_restriction_op_2(self):
+        #0
+        std_map = Epetra.Map(len(self.all_fine_vols_ic), 0, self.comm)
+        self.trilOR = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
+        gids_vols_ic = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols_ic, flat=True)
+        for primal in self.primals:
+            #1
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            primal_id = self.ident_primal[primal_id]
+            restriction_tag = self.mb.tag_get_handle(
+                            "RESTRICTION_PRIMAL {0}".format(primal_id), 1, types.MB_TYPE_INTEGER,
+                            True, types.MB_TAG_SPARSE)
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            self.mb.tag_set_data(
+                self.elem_primal_id_tag,
+                fine_elems_in_primal,
+                np.repeat(primal_id, len(fine_elems_in_primal)))
+            elems_ic = self.all_fine_vols_ic & set(fine_elems_in_primal)
+            gids_elems_ic = self.mb.tag_get_data(self.global_id_tag, elems_ic, flat=True)
+            local_map = []
+            for gid in gids_elems_ic:
+                #2
+                local_map.append(self.map_vols_ic[gid])
+            #1
+            self.trilOR.InsertGlobalValues(primal_id, np.repeat(1, len(local_map)), local_map)
+            #gids = self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True)
+            #self.trilOR.InsertGlobalValues(primal_id, np.repeat(1, len(gids)), gids)
+            self.mb.tag_set_data(restriction_tag, fine_elems_in_primal, np.repeat(1, len(fine_elems_in_primal)))
+        #0
+        self.trilOR.FillComplete()
+        """for i in range(len(self.primals)):
+            p = self.trilOR.ExtractGlobalRowCopy(i)
             print(p[0])
             print(p[1])
             print('\n')"""
@@ -893,7 +1090,7 @@ class MsClassic_mono:
     def get_volumes_in_interfaces(self, primal_id, id_dict = False):
 
         """
-        obtem uma lista com os elementos na interface de um primal
+        obtem uma lista com os elementos dos primais que estao na interface do primal_id
 
         se a flag id_dict == 1 retorna um mapeamento local da seguinte maneira:
         id_gids = dict(zip(gids_in_primal + gids_in_interface), range(len(gids_in_primal + gids_in_interface)))
@@ -985,6 +1182,35 @@ class MsClassic_mono:
 
         return keq
 
+    def modificando_op(self):
+
+        for volume in self.wells:
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            if global_volume in self.wells_d:
+                fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)
+                primal_volume = self.mb.tag_get_data(
+                    self.primal_id_tag, int(fin_prim), flat=True)[0]
+                primal_volume = self.ident_primal[primal_volume]
+                p = self.trilOP.ExtractGlobalRowCopy(global_volume)
+                index = p[1]
+                map_index = dict(zip(index, range(len(index))))
+                values = p[0]
+                for i in index:
+                    if i == primal_volume:
+                        values[map_index[i]] = 1.0
+                    else:
+                        values[map_index[i]] = 0.0
+
+                self.trilOP.ReplaceGlobalValues(global_volume, values, index)
+
+        """for volume in self.wells:
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            if global_volume in self.wells_d:
+                p = self.trilOP.ExtractGlobalRowCopy(global_volume)
+                print(global_volume)
+                print(p[1])
+                print(p[0])"""
+
     def modificar_matriz(self, A, rows, columns):
         """
         Modifica a matriz A para o tamanho (rows x columns)
@@ -1027,10 +1253,9 @@ class MsClassic_mono:
         Multiplica a matriz A de ordem row x row pelo vetor de tamanho row
 
         """
-
+        #0
         std_map = Epetra.Map(row, 0, self.comm)
         c = Epetra.Vector(std_map)
-
         A.Multiply(False, b, c)
 
         return c
@@ -1179,6 +1404,72 @@ class MsClassic_mono:
                 volume = volumes_in_primal[i]
                 self.mb.tag_set_data(self.pcorr_tag, volume, x[i])
                 self.mb.tag_set_data(self.pms2_tag, volume, x_np[i])
+
+    def organize_op(self):
+        #0
+        std_map = Epetra.Map(len(self.all_fine_vols_ic),0,self.comm)
+        trilOP2 = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+        gids_vols_ic = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols_ic, flat=True)
+        cont = 0
+        for i in gids_vols_ic:
+            #1
+            p = self.trilOP.ExtractGlobalRowCopy(i)
+            values = p[0]
+            index = p[1]
+            trilOP2.InsertGlobalValues(self.map_vols_ic[i], list(values), list(index))
+        #0
+        self.trilOP = trilOP2
+
+    def organize_or(self):
+        #0
+        std_map = Epetra.Map(len(self.all_fine_vols_ic),0,self.comm)
+        trilOR2 = []
+
+        gids_vols_ic = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols_ic, flat=True)
+
+    def organize_Pf(self):
+
+        """
+        organiza a solucao da malha fina para setar no arquivo de saida
+        """
+        #0
+        std_map = Epetra.Map(len(self.all_fine_vols),0,self.comm)
+        Pf2 = Epetra.Vector(std_map)
+        for i in range(len(self.Pf)):
+            #1
+            value = self.Pf[i]
+            ind = self.map_vols_ic_2[i]
+            Pf2[ind] = value
+        #0
+        for i in range(len(self.wells_d)):
+            #1
+            value = self.set_p[i]
+            ind = self.wells_d[i]
+            Pf2[ind] = value
+        #0
+        self.Pf_all = Pf2
+
+    def organize_Pms(self):
+
+        """
+        organiza a solucao do Pms para setar no arquivo de saida
+        """
+        #0
+        std_map = Epetra.Map(len(self.all_fine_vols),0,self.comm)
+        Pms2 = Epetra.Vector(std_map)
+        for i in range(len(self.Pms)):
+            #1
+            value = self.Pms[i]
+            ind = self.map_vols_ic_2[i]
+            Pms2[ind] = value
+        #0
+        for i in range(len(self.wells_d)):
+            #1
+            value = self.set_p[i]
+            ind = self.wells_d[i]
+            Pms2[ind] = value
+        #0
+        self.Pms_all = Pms2
 
     def pymultimat(self, A, B, nf):
         """
@@ -1538,6 +1829,105 @@ class MsClassic_mono:
 
         self.trans_fine.FillComplete()
 
+    def set_global_problem_vf_2(self):
+        """
+        transmissibilidade da malha fina excluindo os volumes com pressao prescrita
+        """
+        #0
+        std_map = Epetra.Map(len(self.all_fine_vols_ic),0,self.comm)
+        self.trans_fine = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
+        self.b = Epetra.Vector(std_map)
+        for volume in self.all_fine_vols_ic - set(self.neigh_wells_d):
+            #1
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            soma = 0.0
+            temp_glob_adj = []
+            temp_k = []
+            for adj in adj_volumes:
+                #2
+                global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                uni = self.unitary(direction)
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                keq = self.kequiv(kvol, kadj)
+                keq = keq*(np.dot(self.A, uni)*self.ro)/(self.mi*np.dot(self.h, uni))
+                temp_glob_adj.append(self.map_vols_ic[global_adj])
+                temp_k.append(-keq)
+                soma = soma + keq
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            #1
+            temp_k.append(soma)
+            temp_glob_adj.append(self.map_vols_ic[global_volume])
+            self.trans_fine.InsertGlobalValues(self.map_vols_ic[global_volume], temp_k, temp_glob_adj)
+            if global_volume in self.wells_n:
+                #2
+                index = self.wells_n.index(global_volume)
+                tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
+                if tipo_de_poco == 1:
+                    #3
+                    self.b[self.map_vols_ic[global_volume]] = self.set_q[index]*self.V
+                #2
+                else:
+                    #3
+                    self.b[self.map_vols_ic[global_volume]] = -self.set_q[index]*self.V
+        #0
+        for volume in self.neigh_wells_d:
+            #1
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            soma = 0.0
+            temp_glob_adj = []
+            temp_k = []
+            for adj in adj_volumes:
+                #2
+                global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                uni = self.unitary(direction)
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                keq = self.kequiv(kvol, kadj)
+                keq = keq*(np.dot(self.A, uni)*self.ro)/(self.mi*np.dot(self.h, uni))
+                if global_adj in self.wells_d:
+                    #3
+                    soma = soma + keq
+                    index = self.wells_d.index(global_adj)
+                    self.b[self.map_vols_ic[global_volume]] += self.set_p[index]*(keq)
+                #2
+                else:
+                    #3
+                    temp_glob_adj.append(self.map_vols_ic[global_adj])
+                    temp_k.append(-keq)
+                    soma = soma + keq
+                #2
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            #1
+            temp_k.append(soma)
+            temp_glob_adj.append(self.map_vols_ic[global_volume])
+            self.trans_fine.InsertGlobalValues(self.map_vols_ic[global_volume], temp_k, temp_glob_adj)
+            if global_volume in self.wells_n:
+                #2
+                index = self.wells_n.index(global_volume)
+                tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
+                if tipo_de_poco == 1:
+                    #3
+                    self.b[self.map_vols_ic[global_volume]] += self.set_q[index]*V
+                #2
+                else:
+                    #3
+                    self.b[self.map_vols_ic[global_volume]] += -self.set_q[index]*V
+        #0
+        self.trans_fine.FillComplete()
+
     def set_Pc(self, Pc):
         """
         seta a pressao nos volumes da malha grossa
@@ -1583,43 +1973,59 @@ class MsClassic_mono:
         return x
 
     def teste_numpy(self):
-        OP = np.zeros((self.nf, self.nc))
-
-        for i in range(self.nf):
+        #0
+        OP = np.zeros((self.nf_ic, self.nc))
+        for i in range(self.nf_ic):
+            #1
             p = self.trilOP.ExtractGlobalRowCopy(i)
             OP[i, p[1]] = p[0]
-            #print(sum(OP[i]))
-
-        OR = np.zeros((self.nc, self.nf))
-
+        #0
+        OR = np.zeros((self.nc, self.nf_ic))
         for i in range(self.nc):
+            #1
             p = self.trilOR.ExtractGlobalRowCopy(i)
             OR[i, p[1]] = p[0]
-
-        Tf = np.zeros((self.nf, self.nf))
-
-        for i in range(self.nf):
+        #0
+        Tf = np.zeros((self.nf_ic, self.nf_ic))
+        for i in range(self.nf_ic):
+            #1
             p = self.trans_fine.ExtractGlobalRowCopy(i)
             for j in range(len(p[1])):
+                #2
                 Tf[i, p[1][j]] = p[0][j]
-
-        b = np.zeros(self.nf)
-
-        for i in range(self.nf):
+        #0
+        b = np.zeros(self.nf_ic)
+        for i in range(self.nf_ic):
+            #1
             b[i] = self.b[i]
-
+        #0
         Tc = np.dot(OR, np.dot(Tf, OP))
+        Qc = np.dot(OR, b)
+        Pc = np.linalg.solve(Tc, Qc)
+        Pms = np.dot(OP, Pc)
+        Pms2 = np.zeros(len(self.all_fine_vols))
+        for i in range(len(Pms)):
+            #1
+            value = Pms[i]
+            ind = self.map_vols_ic_2[i]
+            Pms2[ind] = value
+        #0
+        for i in range(len(self.wells_d)):
+            #1
+            value = self.set_p[i]
+            ind = self.wells_d[i]
+            Pms2[ind] = value
+        #0
+        self.Pms_all = Pms2
 
-        invTc = np.linalg.inv(Tc)
-
-        TfMs = np.dot(OP, np.dot(invTc, OR))
+        """TfMs = np.dot(OP, np.dot(invTc, OR))
         temp = np.zeros(self.nf)
         for i in range(self.nf):
             if i in self.wells_d:
                 TfMs[i,:] = temp.copy()
                 TfMs[i,i] = 1.0
         Pms = np.linalg.solve(TfMs, b)
-        mb.tag_set_data(self.pms3_tag, self.all_fine_vols, Pms)
+        mb.tag_set_data(self.pms3_tag, self.all_fine_vols, Pms)"""
 
 
         """with open('b.txt', 'w') as arq:
@@ -1700,17 +2106,18 @@ class MsClassic_mono:
 
     def run(self):
 
+
         #self.add_gr()
 
         #self.set_global_problem()
         #self.set_global_problem_gr()
         #self.set_global_problem_gr_vf()
         self.set_global_problem_vf()
-        #self.calculate_prolongation_op_het()
+        self.calculate_prolongation_op_het()
+        #self.modificando_op()
         #self.calculate_prolongation_op_het_2()
         #self.calculate_prolongation_op_het_3()
-        self.calculate_prolongation_op_het_4()
-        self.calculate_restriction_op()
+        #self.calculate_prolongation_op_het_4()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
         self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
@@ -1730,6 +2137,48 @@ class MsClassic_mono:
         #self.write_op(self.trilOP, self.nf, self.nc)
         #self.write_or(self.trilOR, self.nc, self.nf)
         #self.write_b()
+
+
+        self.mb.write_file('new_out_mono.vtk')
+
+    def run_2(self):
+        #0
+        #help(Epetra.CrsMatrix)
+
+        self.calculate_restriction_op_2()
+        self.set_global_problem_vf_2()
+        self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
+        self.organize_Pf()
+        self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
+        self.calculate_prolongation_op_het()
+        self.organize_op()
+        self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+        self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+        self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        #self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+        #self.organize_Pms()
+        self.teste_numpy()
+        self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+        self.Neuman_problem_4()
+        self.erro()
+
+
+        """print(Epetra.NumMyCols(self.trilOP))
+        print(Epetra.NumMyRows(self.trilOP))"""
+        #print(self.trilOP.NumMyRows())
+        #print(self.trilOP.NumMyCols())
+
+
+
+
+
+
+
+
+
+
+
+
 
 
         self.mb.write_file('new_out_mono.vtk')
