@@ -1712,6 +1712,12 @@ class MsClassic_mono:
         self.A = A
         self.V = V
 
+    def read_structured_2(self):
+        elem = self.all_fine_vols[0]
+        print(elem)
+
+        pass
+
     def set_global_problem(self):
         """
         Obtem a matriz de transmissibilidade por diferencas finitas
@@ -2449,7 +2455,7 @@ class MsClassic_mono:
     def run_2(self):
         #0
         self.calculate_restriction_op_2()
-        ##self.set_global_problem_vf_2()
+        #self.set_global_problem_vf_2()
         self.set_global_problem_gr_vf_2()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
         self.organize_Pf()
@@ -2473,9 +2479,10 @@ class MsClassic_mono:
         ##self.organize_Pms()
         self.teste_numpy()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-        self.Neuman_problem_4_gr()
+        #self.Neuman_problem_4()
+        #self.Neuman_problem_4_gr()
         self.erro()
-        self.erro_2()
+        #self.erro_2()
         ##self.add_gr()
 
 

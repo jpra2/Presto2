@@ -29,9 +29,15 @@ class Preprocessor(object):
             poco = 'P{0}'.format(i)
             #temp.append(poco)
             localizacao = self.poco['localizacao']
+            localizacao2 = self.poco['localizacao2']
 
             global_id = []
             for i in localizacao:
+                global_id.append(int(i))
+            temp.append(global_id)
+
+            global_id = []
+            for i in localizacao2:
                 global_id.append(int(i))
             temp.append(global_id)
 
@@ -52,9 +58,6 @@ class Preprocessor(object):
 
             raio_do_poco = float(self.poco['raio-do-poco'])
             temp.append(raio_do_poco)
-
-            perfuracoes = int(self.poco['perfuracoes'])
-            temp.append(perfuracoes)
 
             d.append(temp[:])
 
@@ -85,8 +88,9 @@ class Preprocessor(object):
         self.smm.store_primal_adj()
         print("took {0}\n".format(time.time()-t0))
 
-        self.smm.create_wells()
+        #self.smm.create_wells()
         #self.smm.create_wells_2()
+        self.smm.create_wells_3()
 
     @property
     def structured_configs(self):
