@@ -1,10 +1,10 @@
 import numpy as np
-from test33_bif import Msclassic_bif
+from test34_bif import Msclassic_bif
 import time
 
 t1 = time.time()
 sim_bif = Msclassic_bif()
-sim_bif.run()
+sim_bif.run_2()
 
 t2 = time.time()
 print('\n')

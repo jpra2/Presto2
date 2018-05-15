@@ -12,6 +12,9 @@ class MsClassic_mono:
         """
         ind = True quando se quer excluir da conta os volumes com pressao prescrita
         """
+        self.ro = 1.0
+        self.mi = 1.0
+        self.gama = 1.0
         self.read_structured()
         self.comm = Epetra.PyComm()
         self.mb = core.Core()
@@ -30,11 +33,9 @@ class MsClassic_mono:
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
         self.sets = self.mb.get_entities_by_type_and_tag(
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
-        self.get_wells()
+        #self.get_wells()
+        self.get_wells_gr()
         self.set_perm()
-        self.ro = 1.0
-        self.mi = 1.0
-        self.gama = 1.0
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
 
@@ -553,7 +554,7 @@ class MsClassic_mono:
 
                         my_pairs.add((gid, primal_id))
 
-        self.trilOP.FillComplete()
+        #self.trilOP.FillComplete()
 
     def calculate_prolongation_op_het_2(self):
 
@@ -1090,14 +1091,14 @@ class MsClassic_mono:
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
             Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
-            erro = abs(Pf - Pms)/float(abs(Pf))
+            erro = abs(Pf - Pms)#/float(abs(Pf))
             self.mb.tag_set_data(self.err_tag, volume, erro)
 
     def erro_2(self):
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
             Pms = self.mb.tag_get_data(self.pms2_tag, volume, flat = True)[0]
-            erro = abs(Pf - Pms)/float(abs(Pf))
+            erro = abs(Pf - Pms)#/float(abs(Pf))
             self.mb.tag_set_data(self.err2_tag, volume, erro)
 
     def get_volumes_in_interfaces(self, fine_elems_in_primal, primal_id, **options):
@@ -1173,6 +1174,49 @@ class MsClassic_mono:
             if tipo_de_prescricao == 0:
                 wells_d.append(global_id)
                 set_p.append(valor_da_prescricao)
+            else:
+                wells_n.append(global_id)
+                set_q.append(valor_da_prescricao)
+
+
+
+
+        self.wells_d = wells_d
+        self.wells_n = wells_n
+        self.set_p = set_p
+        self.set_q = set_q
+
+    def get_wells_gr(self):
+        """
+        obtem:
+        self.wells == os elementos que contem os pocos
+        self.wells_d == lista contendo os ids globais dos volumes com pressao prescrita
+        self.wells_n == lista contendo os ids globais dos volumes com vazao prescrita
+        self.set_p == lista com os valores da pressao referente a self.wells_d
+        self.set_q == lista com os valores da vazao referente a self.wells_n
+
+        """
+        wells_d = []
+        wells_n = []
+        set_p = []
+        set_q = []
+
+        wells_set = self.mb.tag_get_data(self.wells_tag, 0, flat=True)[0]
+        self.wells = self.mb.get_entities_by_handle(wells_set)
+        wells = self.wells
+
+        for well in wells:
+            global_id = self.mb.tag_get_data(self.global_id_tag, well, flat=True)[0]
+            valor_da_prescricao = self.mb.tag_get_data(self.valor_da_prescricao_tag, well, flat=True)[0]
+            tipo_de_prescricao = self.mb.tag_get_data(self.tipo_de_prescricao_tag, well, flat=True)[0]
+            #raio_do_poco = self.mb.tag_get_data(self.raio_do_poco_tag, well, flat=True)[0]
+            #tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, well, flat=True)[0]
+            #tipo_de_fluido = self.mb.tag_get_data(self.tipo_de_fluido_tag, well, flat=True)[0]
+            #pwf = self.mb.tag_get_data(self.pwf_tag, well, flat=True)[0]
+            if tipo_de_prescricao == 0:
+                centroid = self.mesh_topo_util.get_average_position([well])
+                wells_d.append(global_id)
+                set_p.append(valor_da_prescricao + (self.tz - centroid[2])*self.gama)
             else:
                 wells_n.append(global_id)
                 set_q.append(valor_da_prescricao)
@@ -1590,6 +1634,7 @@ class MsClassic_mono:
             trilOP2.InsertGlobalValues(self.map_vols_ic[i], list(values), list(index))
         #0
         self.trilOP = trilOP2
+        self.trilOP.FillComplete()
 
     def organize_or(self):
         #0
@@ -2462,27 +2507,27 @@ class MsClassic_mono:
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
         self.calculate_prolongation_op_het()
         self.organize_op()
-        #self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+        self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
 
 
-        #"""for i in range(self.nc):
-        #    p = self.Tc.ExtractGlobalRowCopy(i)
-        #    print(i)
-        #    print(p[1])
-        #    print(p[0])
-        #    print('\n')"""
+        """for i in range(self.nc):
+            p = self.Tc.ExtractGlobalRowCopy(i)
+            print(i)
+            print(p[1])
+            print(p[0])
+            print('\n')"""
 
 
-        ##self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
-        ##self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
-        ##self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
-        ##self.organize_Pms()
-        self.teste_numpy()
+        self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+        self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+        self.organize_Pms()
+        #self.teste_numpy()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
         #self.Neuman_problem_4()
-        #self.Neuman_problem_4_gr()
+        self.Neuman_problem_4_gr()
         self.erro()
-        #self.erro_2()
+        self.erro_2()
         ##self.add_gr()
 
 
