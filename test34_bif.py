@@ -279,16 +279,16 @@ class Msclassic_bif:
         lim = 0.00001
 
         for volume in self.all_fine_vols:
-            gid = mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-            div = self.div_upwind_2(volume, self.pf_tag)
-            fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
-            sat1 = mb.tag_get_data(self.sat_tag, volume)[0][0]
+            gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            div = self.div_upwind_3(volume, self.pf_tag)
+            fi = self.mb.tag_get_data(self.fi_tag, volume)[0][0]
+            sat1 = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
             sat = sat1 + div*(self.delta_t/(fi*self.V))
             if abs(div) < lim or sat1 == (1 - self.Sor):
                 continue
 
             elif gid in self.wells_d:
-                tipo_de_poco = mb.tag_get_data(self.tipo_de_poco_tag, volume)[0][0]
+                tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)[0][0]
                 if tipo_de_poco == 0:
                     continue
 
@@ -301,7 +301,7 @@ class Msclassic_bif:
 
                 sys.exit(0)
             else:
-                 mb.tag_set_data(self.sat_tag, volume, sat)
+                 self.mb.tag_set_data(self.sat_tag, volume, sat)
 
     def cfl(self, fi, qmax):
         cfl = 1.0
@@ -478,41 +478,40 @@ class Msclassic_bif:
         fi2 = 0.0
         for volume in self.all_fine_vols:
             q = 0.0
-            pvol = mb.tag_get_data(p_tag, volume)[0][0]
-            adjs_vol = mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
-            volume_centroid = mesh_topo_util.get_average_position([volume])
-            global_volume = mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-            kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
-            lamb_w_vol = mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
-            lamb_o_vol = mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
-            sat_vol = mb.tag_get_data(self.sat_tag, volume)[0][0]
-            fi = mb.tag_get_data(self.fi_tag, volume)[0][0]
+            pvol = self.mb.tag_get_data(p_tag, volume)[0][0]
+            adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+            lamb_o_vol = self.mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
+            sat_vol = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
+            fi = self.mb.tag_get_data(self.fi_tag, volume)[0][0]
             if fi > fi2:
                 fi2 = fi
 
             for adj in adjs_vol:
-                padj = mb.tag_get_data(p_tag, adj)[0][0]
-                adj_centroid = mesh_topo_util.get_average_position([adj])
+                padj = self.mb.tag_get_data(p_tag, adj)[0][0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
                 direction = adj_centroid - volume_centroid
-                lamb_w_adj = mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
-                lamb_o_adj = mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
+                lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
+                lamb_o_adj = self.mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
                 uni = self.unitary(direction)
                 kvol = np.dot(np.dot(kvol,uni),uni)
                 kvol = kvol*(lamb_w_vol + lamb_o_vol)
-                kadj = mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 kadj = np.dot(np.dot(kadj,uni),uni)
                 kadj = kadj*(lamb_w_adj + lamb_o_adj)
                 keq = self.kequiv(kvol, kadj)
                 keq = keq*(np.dot(self.A, uni))/(np.dot(self.h, uni))
-                sat_adj = mb.tag_get_data(self.sat_tag, adj)[0][0]
+                sat_adj = self.mb.tag_get_data(self.sat_tag, adj)[0][0]
                 if abs(sat_adj - sat_vol) < lim:
                     continue
                 dfds = ((lamb_w_adj/(lamb_w_adj+lamb_o_adj)) - (lamb_w_vol/(lamb_w_vol+lamb_o_vol)))/float((sat_adj - sat_vol))
-                q = dfds*keq*(padj - pvol)
-                if abs(q) > q2:
-                    q2 = abs(q)
-                kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
-
+                q = abs(dfds*keq*(padj - pvol))
+                if q > q2:
+                    q2 = q
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
         return q2, fi2
 
@@ -603,30 +602,29 @@ class Msclassic_bif:
 
         q = 0.0
 
-        pvol = mb.tag_get_data(p_tag, volume)[0][0]
-        adjs_vol = mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
-        volume_centroid = mesh_topo_util.get_average_position([volume])
-        global_volume = mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-        kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
-        lamb_w_vol = mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+        pvol = self.mb.tag_get_data(p_tag, volume)[0][0]
+        adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+        volume_centroid = self.mesh_topo_util.get_average_position([volume])
+        global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+        kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+        lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
 
         for adj in adjs_vol:
-            padj = mb.tag_get_data(p_tag, adj)[0][0]
-            adj_centroid = mesh_topo_util.get_average_position([adj])
+            padj = self.mb.tag_get_data(p_tag, adj)[0][0]
+            adj_centroid = self.mesh_topo_util.get_average_position([adj])
             direction = adj_centroid - volume_centroid
             uni = self.unitary(direction)
             kvol = np.dot(np.dot(kvol,uni),uni)
-            kadj = mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+            kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
             kadj = np.dot(np.dot(kadj,uni),uni)
-            lamb_w_adj = mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
+            lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
             keq = self.kequiv(kvol, kadj)
             grad_p = padj - pvol
-
             lamb_eq = (lamb_w_vol + lamb_w_adj)/2.0
             keq = (keq*lamb_eq*(np.dot(self.A, uni)))/(np.dot(self.h, uni))
 
             q = q + keq*grad_p
-            kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
         return q
 
@@ -1728,6 +1726,7 @@ class Msclassic_bif:
             t_ = t_ + self.delta_t"""
 
     def run_2(self):
+        #0
         t_ = 0.0
         loop = 0
         self.set_sat_in()
@@ -1750,4 +1749,33 @@ class Msclassic_bif:
         self.Neuman_problem_4_3()
         self.erro()
         self.erro_2()
+        qmax, fi = self.div_max_3(self.pf_tag)
+        self.cfl(fi, qmax)
         self.mb.write_file('new_out_bif{0}.vtk'.format(loop))
+        loop = 1
+        t_ = t_ + self.delta_t
+        while t_ <= self.t and loop <= self.loops:
+            #1
+            self.calculate_sat()
+            self.set_lamb_2()
+            self.set_global_problem_vf_2()
+            self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
+            self.organize_Pf()
+            self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
+            self.calculate_prolongation_op_het()
+            self.organize_op()
+            self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+            self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+            self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+            self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+            self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+            self.organize_Pms()
+            self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+            self.Neuman_problem_4_3()
+            self.erro()
+            self.erro_2()
+            qmax, fi = self.div_max_3(self.pf_tag)
+            self.cfl(fi, qmax)
+            self.mb.write_file('new_out_bif{0}.vtk'.format(loop))
+            loop += 1
+            t_ = t_ + self.delta_t
