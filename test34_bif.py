@@ -26,20 +26,20 @@ class Msclassic_bif:
             primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 4
-        self.t = 10
+        self.loops = 6
+        self.t = 100
         self.mi_w = 1.0
         self.mi_o = 1.3
-        self.ro_w = 1.0
-        self.ro_o = 0.9
-        self.gama_w = 1.0
-        self.gama_o = 1.0
+        self.ro_w = 1000
+        self.ro_o = 980
+        self.gama_w = 9800
+        self.gama_o = 10000
         self.gama_ = self.gama_w + self.gama_o
         self.Swi = 0.2
         self.Swc = 0.2
         self.Sor = 0.2
-        self.nw = 4
-        self.no = 4
+        self.nw = 2
+        self.no = 2
         self.set_k()
         self.set_fi()
         self.get_wells()
@@ -289,7 +289,7 @@ class Msclassic_bif:
 
             elif gid in self.wells_d:
                 tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)[0][0]
-                if tipo_de_poco == 0:
+                if tipo_de_poco == 1:
                     continue
 
             elif sat < 0 or sat > (1 - self.Sor):
@@ -476,6 +476,7 @@ class Msclassic_bif:
         q2 = 0.0
         fi = 0.0
         fi2 = 0.0
+        import pdb; pdb.set_trace()
         for volume in self.all_fine_vols:
             q = 0.0
             pvol = self.mb.tag_get_data(p_tag, volume)[0][0]
@@ -1569,9 +1570,9 @@ class Msclassic_bif:
 
     def set_k(self):
 
-        perm_tensor = [1.0, 0.0, 0.0,
-                        0.0, 1.0, 0.0,
-                        0.0, 0.0, 1.0]
+        perm_tensor = [0.0000000000008, 0.0, 0.0,
+                        0.0, 0.0000000000008, 0.0,
+                        0.0, 0.0, 0.0000000000008]
 
         for volume in self.all_fine_vols:
             self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)

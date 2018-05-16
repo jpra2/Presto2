@@ -33,9 +33,10 @@ class MsClassic_mono:
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
         self.sets = self.mb.get_entities_by_type_and_tag(
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
-        #self.get_wells()
-        self.get_wells_gr()
-        self.set_perm()
+        self.get_wells()
+        #self.get_wells_gr()
+        #self.set_perm()
+        self.set_perm_2()
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
 
@@ -75,7 +76,6 @@ class MsClassic_mono:
 
         cont = 0
         for primal in self.primals:
-            volumes_in_interface = []
             soma = 0
             soma2 = 0
             soma3 = 0
@@ -85,28 +85,51 @@ class MsClassic_mono:
             fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
             primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             gids_in_primal = self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True)
-            volumes_in_interface, id_gids = self.get_volumes_in_interfaces(
-            fine_elems_in_primal, primal_id, id_dict = True)
+            volumes_in_interface = self.get_volumes_in_interfaces(
+            fine_elems_in_primal, primal_id)
+            gids_in_interface = self.mb.tag_get_data(self.global_id_tag, volumes_in_interface, flat=True)
+            id_gids = list(gids_in_primal) + list(gids_in_interface)
+            id_gids = dict(zip(id_gids, range(len(id_gids))))
             std_map = Epetra.Map(len(id_gids), 0, self.comm)
             A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
             b = Epetra.Vector(std_map)
-            #print(len(id_gids))
             A_np = np.zeros((len(id_gids), len(id_gids)))
             b_np = np.zeros(len(id_gids))
 
-            for volume in fine_elems_in_primal:
+            for volume in set(fine_elems_in_primal) | set(volumes_in_interface):
                 global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                volume_centroid = self.mesh_topo_util.get_average_position([volume])
                 if global_volume in self.wells_d:
                     index = self.wells_d.index(global_volume)
+                    b[id_gids[global_volume]] = self.set_p[index] + (self.tz-volume_centroid[2])*self.gama
+                    b_np[id_gids[global_volume]] = self.set_p[index] + (self.tz-volume_centroid[2])*self.gama
                     A.InsertGlobalValues(id_gids[global_volume], [1.0], [id_gids[global_volume]])
                     A_np[id_gids[global_volume], id_gids[global_volume]] = 1.0
-                    b[id_gids[global_volume]] = self.set_p[index]
-                    b_np[id_gids[global_volume]] = self.set_p[index]
-                else:
-                    volume_centroid = self.mesh_topo_util.get_average_position([volume])
-                    adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
-                    kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
+                elif volume in volumes_in_interface:
+                #if volume in volumes_in_interface:
+                    for adj in adj_volumes:
+                        global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                        fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, adj, flat=True)
+                        primal_adj = self.mb.tag_get_data(
+                            self.primal_id_tag, int(fin_prim), flat=True)[0]
+                        if primal_adj == primal_id:
+                            pms_adj = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
+                            pms_volume = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                            b[id_gids[global_volume]] = pms_volume - pms_adj
+                            b_np[id_gids[global_volume]] = pms_volume - pms_adj
+                            temp_k.append(1.0)
+                            temp_glob_adj.append(id_gids[global_volume])
+                            temp_k.append(-1.0)
+                            temp_glob_adj.append(id_gids[global_adj])
+                            A.InsertGlobalValues(id_gids[global_volume], temp_k, temp_glob_adj)
+                            A_np[id_gids[global_volume], temp_glob_adj] = temp_k[:]
+                            temp_k = []
+                            temp_glob_adj = []
+
+                else:
+                    kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
                     for adj in adj_volumes:
                         global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
                         adj_centroid = self.mesh_topo_util.get_average_position([adj])
@@ -136,19 +159,21 @@ class MsClassic_mono:
                     temp_glob_adj.append(id_gids[global_volume])
                     A.InsertGlobalValues(id_gids[global_volume], temp_k, temp_glob_adj)
                     A_np[id_gids[global_volume], temp_glob_adj] = temp_k
+                    temp_k = []
+                    temp_glob_adj = []
 
                     if global_volume in self.wells_n:
                         index = self.wells_n.index(global_volume)
                         tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
                         if tipo_de_poco == 1:
-                            b[id_gids[global_volume]] = self.set_q[index] + soma2
-                            b_np[id_gids[global_volume]] = self.set_q[index] + soma2
+                            b[id_gids[global_volume]] += self.set_q[index] + soma2
+                            b_np[id_gids[global_volume]] += self.set_q[index] + soma2
                         else:
-                            b[id_gids[global_volume]] = -self.set_q[index] + soma2
-                            b_np[id_gids[global_volume]] = -self.set_q[index] + soma2
+                            b[id_gids[global_volume]] += -self.set_q[index] + soma2
+                            b_np[id_gids[global_volume]] += -self.set_q[index] + soma2
                     else:
-                        b[id_gids[global_volume]] = soma2
-                        b_np[id_gids[global_volume]] = soma2
+                        b[id_gids[global_volume]] += soma2
+                        b_np[id_gids[global_volume]] += soma2
 
                 kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
@@ -156,15 +181,11 @@ class MsClassic_mono:
             x = self.solve_linear_problem(A, b, len(id_gids))
             x_np = np.linalg.solve(A_np, b_np)
             #id_gids_2 = dict(zip(len(gids_in_primal), gids_in_primal))
-            resp = []
+
             for volume in fine_elems_in_primal:
                 global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-                resp.append(x[id_gids[global_volume]])
-
-                #mb.tag_set_data(tag_da_gravidade, volume, x[global_volume])
-            if cont < 3:
-                print(x)
-                print(x_np)
+                pms_volume = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                self.mb.tag_set_data(self.gravidade_tag, volume, x[id_gids[global_volume]] + pms_volume)
             cont += 1
 
     def calculate_local_problem_het(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
@@ -999,6 +1020,10 @@ class MsClassic_mono:
             print('\n')"""
 
     def create_tags(self, mb):
+        self.gravidade_tag = mb.tag_get_handle(
+                        "GRAVIDADE", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
         self.Pc2_tag = mb.tag_get_handle(
                         "PC2", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
@@ -2315,6 +2340,29 @@ class MsClassic_mono:
         for volume in self.all_fine_vols:
             self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)
 
+    def set_perm_2(self):
+        """
+        seta a permeabilidade dos volumes da malha fina
+
+        """
+
+        perm_tensor_1 = [1.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                        0.0, 0.0, 1.0]
+
+        perm_tensor_2 = [0.5, 0.0, 0.0,
+                        0.0, 0.5, 0.0,
+                        0.0, 0.0, 0.5]
+
+        gid_lim = 404
+
+        for volume in self.all_fine_vols:
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+            if global_volume <= gid_lim:
+                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
+            else:
+                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+
     def solve_linear_problem(self, A, b, n):
 
         std_map = Epetra.Map(n, 0, self.comm)
@@ -2460,6 +2508,26 @@ class MsClassic_mono:
                     arq.write(str(j))
                     arq.write('\n')
 
+    def obter_grafico(self):
+        l = []
+        for i in range(self.nz):
+            gid = self.nx*self.ny*i
+            l.append(gid)
+        pos = []
+        p = []
+        for volume in self.all_fine_vols:
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+            if global_volume in l:
+                volume_centroid = self.mesh_topo_util.get_average_position([volume])
+                value = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
+                p.append(value)
+                pos.append(volume_centroid[2])
+
+        with open('grafico.txt', 'w') as arq:
+            for i in range(len(p)):
+                arq.write('{0},{1}'.format(pos[i], p[i]))
+                arq.write('\n')
+
     def run(self):
 
 
@@ -2500,8 +2568,8 @@ class MsClassic_mono:
     def run_2(self):
         #0
         self.calculate_restriction_op_2()
-        #self.set_global_problem_vf_2()
-        self.set_global_problem_gr_vf_2()
+        self.set_global_problem_vf_2()
+        #self.set_global_problem_gr_vf_2()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
         self.organize_Pf()
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
@@ -2524,11 +2592,12 @@ class MsClassic_mono:
         self.organize_Pms()
         #self.teste_numpy()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-        #self.Neuman_problem_4()
-        self.Neuman_problem_4_gr()
+        self.Neuman_problem_4()
+        #self.Neuman_problem_4_gr()
         self.erro()
         self.erro_2()
-        ##self.add_gr()
+        #self.add_gr()
+        self.obter_grafico()
 
 
         #"""print(Epetra.NumMyCols(self.trilOP))
