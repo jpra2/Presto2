@@ -35,8 +35,8 @@ class MsClassic_mono:
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
         self.get_wells()
         #self.get_wells_gr()
-        #self.set_perm()
-        self.set_perm_2()
+        self.set_perm()
+        #self.set_perm_2()
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
 
@@ -188,6 +188,147 @@ class MsClassic_mono:
                 self.mb.tag_set_data(self.gravidade_tag, volume, x[id_gids[global_volume]] + pms_volume)
             cont += 1
 
+    def add_gr_2(self):
+
+        zeros = np.zeros(len(self.all_fine_vols))
+
+        std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
+        #self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
+        self.vect_gr = Epetra.Vector(std_map)
+
+        i = 0
+
+        my_pairs = set()
+
+        for collocation_point_set in self.sets:
+
+            i += 1
+
+            childs = self.mb.get_child_meshsets(collocation_point_set)
+            collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
+            primal_elem = self.mb.tag_get_data(self.fine_to_primal_tag, collocation_point,
+                                           flat=True)[0]
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
+
+            primal_id = self.ident_primal[primal_id]
+
+            support_vals_gr_tag = self.mb.tag_get_handle(
+                "TMP_SUPPORT_VALS_GR {0}".format(primal_id), 1, types.MB_TYPE_DOUBLE, True,
+                types.MB_TAG_SPARSE, default_value=0.0)
+
+            self.mb.tag_set_data(support_vals_gr_tag, self.all_fine_vols, zeros)
+            #self.mb.tag_set_data(support_vals_tag, collocation_point, 1.0)
+
+            for vol in childs:
+
+                elems_vol = self.mb.get_entities_by_handle(vol)
+                c_faces = self.mb.get_child_meshsets(vol)
+
+                for face in c_faces:
+                    elems_fac = self.mb.get_entities_by_handle(face)
+                    c_edges = self.mb.get_child_meshsets(face)
+
+                    for edge in c_edges:
+                        elems_edg = self.mb.get_entities_by_handle(edge)
+                        c_vertices = self.mb.get_child_meshsets(edge)
+                        # a partir desse ponto op de prolongamento eh preenchido
+                        self.calculate_local_problem_add_gr(
+                            elems_edg, c_vertices, support_vals_gr_tag, self.h2)
+
+                    self.calculate_local_problem_add_gr(
+                        elems_fac, c_edges, support_vals_gr_tag, self.h2)
+
+                   # print "support_val_tag" , mb.tag_get_data(support_vals_tag,elems_edg)
+                self.calculate_local_problem_add_gr(
+                    elems_vol, c_faces, support_vals_gr_tag, self.h2)
+
+
+                vals = self.mb.tag_get_data(support_vals_gr_tag, elems_vol, flat=True)
+                gids = self.mb.tag_get_data(self.global_id_tag, elems_vol, flat=True)
+                primal_elems = self.mb.tag_get_data(self.fine_to_primal_tag, elems_vol,
+                                               flat=True)
+
+                for val, gid in zip(vals, gids):
+                    if (gid, primal_id) not in my_pairs:
+                        if val == 0.0:
+                            pass
+                        else:
+                            self.vect_gr[gid] = val
+
+                        my_pairs.add((gid, primal_id))
+
+        #self.trilOP.FillComplete()
+
+    def calculate_local_problem_add_gr(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
+        std_map = Epetra.Map(len(elems), 0, self.comm)
+        linear_vals = np.arange(0, len(elems))
+        id_map = dict(zip(elems, linear_vals))
+        boundary_elms = set()
+
+        b = Epetra.Vector(std_map)
+        x = Epetra.Vector(std_map)
+
+        A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+
+        for ms in lesser_dim_meshsets:
+            lesser_dim_elems = self.mb.get_entities_by_handle(ms)
+            for elem in lesser_dim_elems:
+                if elem in boundary_elms:
+                    continue
+                boundary_elms.add(elem)
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1], [idx])
+                b[idx] = self.mb.tag_get_data(support_vals_tag, elem, flat=True)[0]
+
+        for elem in (set(elems) ^ boundary_elms):
+            soma2 = 0
+            soma3 = 0
+            k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+            centroid_elem = self.mesh_topo_util.get_average_position([elem])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(
+                np.asarray([elem]), 2, 3, 0)
+            values = []
+            ids = []
+            for adj in adj_volumes:
+                if adj in id_map:
+                    global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_elem
+                    uni = self.unitary(direction)
+                    altura = centroid_adj[2]
+                    z = uni[2]
+                    k_elem = np.dot(np.dot(k_elem,uni),uni)
+                    kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    kadj = np.dot(np.dot(kadj,uni),uni)
+                    keq = self.kequiv(k_elem, kadj)
+                    keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                    if z == 1.0:
+                        keq2 = keq*self.gama
+                        soma2 = soma2 - keq2
+                        soma3 = soma3 + (keq2*(self.tz-altura))
+
+                    ids.append(id_map[adj])
+                    values.append(-keq)
+                    k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+
+            soma2 = soma2*(self.tz-centroid_elem[2])
+            soma2 = -(soma2 + soma3)
+            values.append(-sum(values))
+            idx = id_map[elem]
+            ids.append(idx)
+            A.InsertGlobalValues(idx, values, ids)
+            b[id_map[elem]] += soma2
+
+        A.FillComplete()
+        linearProblem = Epetra.LinearProblem(A, x, b)
+        solver = AztecOO.AztecOO(linearProblem)
+        # AZ_last, AZ_summary, AZ_warnings
+        solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
+        solver.Iterate(1000, 1e-9)
+
+        self.mb.tag_set_data(support_vals_tag, elems, np.asarray(x))
+
     def calculate_local_problem_het(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
         std_map = Epetra.Map(len(elems), 0, self.comm)
         linear_vals = np.arange(0, len(elems))
@@ -218,7 +359,7 @@ class MsClassic_mono:
             ids = []
             for adj in adj_volumes:
                 if adj in id_map:
-                    k_adj = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                     centroid_adj = self.mesh_topo_util.get_average_position([adj])
                     direction = centroid_adj - centroid_elem
                     uni = self.unitary(direction)
@@ -226,8 +367,9 @@ class MsClassic_mono:
                     k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                     k_adj = np.dot(np.dot(k_adj,uni),uni)
                     keq = self.kequiv(k_elem, k_adj)
-                    keq = keq/(np.dot(h2, uni))
-                    values.append(keq)
+                    #keq = keq/(np.dot(h2, uni))
+                    keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                    values.append(-keq)
                     ids.append(id_map[adj])
                     k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
             values.append(-sum(values))
@@ -2528,6 +2670,25 @@ class MsClassic_mono:
                 arq.write('{0},{1}'.format(pos[i], p[i]))
                 arq.write('\n')
 
+    def teste_centroid(self):
+        l1 = list(range(self.nx))
+        l2 = []
+        for i in range(self.nx):
+            l2.append(self.nx*self.ny*(self.nz-1) + i)
+
+        l = l1+l2
+
+        for volume in self.all_fine_vols:
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+            if global_volume in l:
+                volume_centroid = self.mesh_topo_util.get_average_position([volume])
+                print(global_volume)
+                print(volume_centroid)
+                print('\n')
+
+
+
+
     def run(self):
 
 
@@ -2591,13 +2752,16 @@ class MsClassic_mono:
         self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
         self.organize_Pms()
         #self.teste_numpy()
+        #self.add_gr_2()
+        #print(self.vect_gr)
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-        self.Neuman_problem_4()
+        #self.Neuman_problem_4()
         #self.Neuman_problem_4_gr()
         self.erro()
-        self.erro_2()
+        #self.erro_2()
         #self.add_gr()
-        self.obter_grafico()
+        #self.obter_grafico()
+        self.teste_centroid()
 
 
         #"""print(Epetra.NumMyCols(self.trilOP))

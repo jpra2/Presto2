@@ -74,15 +74,15 @@ class StructuredMultiscaleMesh:
                            for k in (
                                np.arange(
                                    self.mesh_size[2]+1, dtype='float64') *
-                               self.block_size[2]/max_mesh_size)
+                               self.block_size[2]/(max_mesh_size/max_mesh_size))
                            for j in (
                                np.arange(
                                    self.mesh_size[1]+1, dtype='float64') *
-                               self.block_size[1]/max_mesh_size)
+                               self.block_size[1]/(max_mesh_size/max_mesh_size))
                            for i in (
                                np.arange(
                                    self.mesh_size[0]+1, dtype='float64') *
-                               self.block_size[0]/max_mesh_size)
+                               self.block_size[0]/(max_mesh_size/max_mesh_size))
                            ], dtype='float64')
         self.verts = self.mb.create_vertices(coords.flatten())
 

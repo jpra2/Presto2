@@ -99,7 +99,7 @@ class Msclassic_bif:
             ids = []
             for adj in adj_volumes:
                 if adj in id_map:
-                    k_adj = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                     centroid_adj = self.mesh_topo_util.get_average_position([adj])
                     direction = centroid_adj - centroid_elem
                     uni = self.unitary(direction)
@@ -111,7 +111,8 @@ class Msclassic_bif:
                     lamb_o_adj = self.mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
                     k_adj = k_adj*(lamb_w_adj + lamb_o_adj)
                     keq = self.kequiv(k_elem, k_adj)
-                    keq = keq/(np.dot(self.h2, uni))
+                    #keq = keq/(np.dot(self.h2, uni))
+                    keq = keq*(np.dot(self.A, uni)/(np.dot(self.h, uni)))
                     values.append(keq)
                     ids.append(id_map[adj])
                     k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
@@ -295,9 +296,13 @@ class Msclassic_bif:
             elif sat < 0 or sat > (1 - self.Sor):
                 print('Erro: saturacao invalida')
                 print('Saturacao: {0}'.format(sat))
+                print('Saturacao anterior: {0}'.format(sat1))
                 print('div: {0}'.format(div))
                 print('gid: {0}'.format(gid))
+                print('fi: {0}'.format(fi))
+                print('V: {0}'.format(self.V))
                 print('delta_t: {0}'.format(self.delta_t))
+                print('loop: {0}'.format(self.loop))
 
                 sys.exit(0)
             else:
@@ -307,6 +312,11 @@ class Msclassic_bif:
         cfl = 1.0
 
         self.delta_t = cfl*(fi*self.V)/float(qmax)
+
+    def cfl_2(self, vmax, h):
+        cfl = 1.0
+
+        self.delta_t = (cfl*h)/float(vmax)
 
     def create_tags(self, mb):
         self.Pc2_tag = mb.tag_get_handle(
@@ -476,7 +486,7 @@ class Msclassic_bif:
         q2 = 0.0
         fi = 0.0
         fi2 = 0.0
-        import pdb; pdb.set_trace()
+        dfds2 = 0
         for volume in self.all_fine_vols:
             q = 0.0
             pvol = self.mb.tag_get_data(p_tag, volume)[0][0]
@@ -512,6 +522,7 @@ class Msclassic_bif:
                 q = abs(dfds*keq*(padj - pvol))
                 if q > q2:
                     q2 = q
+                    dfds2 = abs(dfds)
                 kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
         return q2, fi2
@@ -1570,9 +1581,9 @@ class Msclassic_bif:
 
     def set_k(self):
 
-        perm_tensor = [0.0000000000008, 0.0, 0.0,
-                        0.0, 0.0000000000008, 0.0,
-                        0.0, 0.0, 0.0000000000008]
+        perm_tensor = [1, 0.0, 0.0,
+                        0.0, 1, 0.0,
+                        0.0, 0.0, 1]
 
         for volume in self.all_fine_vols:
             self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)
@@ -1661,6 +1672,52 @@ class Msclassic_bif:
 
         return uni
 
+    def vel_max(self, p_tag):
+        """
+        Calcula tambem a variacao do fluxo fracionario com a saturacao
+        """
+        lim = 0.00001
+        v2 = 0.0
+        h2 = 0
+        dfds2 = 0
+        for volume in self.all_fine_vols:
+            v = 0.0
+            pvol = self.mb.tag_get_data(p_tag, volume)[0][0]
+            adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+            lamb_o_vol = self.mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
+            sat_vol = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
+            for adj in adjs_vol:
+                padj = self.mb.tag_get_data(p_tag, adj)[0][0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
+                lamb_o_adj = self.mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
+                uni = self.unitary(direction)
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kvol = kvol*(lamb_w_vol + lamb_o_vol)
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                kadj = kadj*(lamb_w_adj + lamb_o_adj)
+                keq = self.kequiv(kvol, kadj)
+                h = (np.dot(self.h, uni))
+                keq = keq/h
+                sat_adj = self.mb.tag_get_data(self.sat_tag, adj)[0][0]
+                if abs(sat_adj - sat_vol) < lim:
+                    continue
+                dfds = ((lamb_w_adj/(lamb_w_adj+lamb_o_adj)) - (lamb_w_vol/(lamb_w_vol+lamb_o_vol)))/float((sat_adj - sat_vol))
+                v = abs(dfds*keq*(padj - pvol))
+                if v > v2:
+                    v2 = v
+                    h2 = h
+                    dfds2 = abs(dfds)
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+
+        return v2, h2
+
     def run(self):
         print('loop')
 
@@ -1729,33 +1786,44 @@ class Msclassic_bif:
     def run_2(self):
         #0
         t_ = 0.0
-        loop = 0
+        self.loop = 0
         self.set_sat_in()
         #self.set_lamb()
         self.set_lamb_2()
-        self.calculate_restriction_op_2()
+        #self.calculate_restriction_op_2()
         self.set_global_problem_vf_2()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
         self.organize_Pf()
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
-        self.calculate_prolongation_op_het()
-        self.organize_op()
-        self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
-        self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
-        self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
-        self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
-        self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
-        self.organize_Pms()
-        self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-        self.Neuman_problem_4_3()
-        self.erro()
-        self.erro_2()
-        qmax, fi = self.div_max_3(self.pf_tag)
-        self.cfl(fi, qmax)
-        self.mb.write_file('new_out_bif{0}.vtk'.format(loop))
-        loop = 1
+        #self.calculate_prolongation_op_het()
+        #self.organize_op()
+        #self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+        #self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+        #self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+        #self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        #self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+        #self.organize_Pms()
+        #self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+        #self.Neuman_problem_4_3()
+        #self.erro()
+        #self.erro_2()
+        #qmax, fi = self.div_max_3(self.pf_tag)
+        #self.cfl(fi, qmax)
+        #print('qmax')
+        #print(qmax)
+        #print('delta_t')
+        #print(self.delta_t)
+        vmax, h = self.vel_max(self.pf_tag)
+        self.cfl_2(vmax, h)
+        print('vmax')
+        print(vmax)
+        print('delta_t')
+        print(self.delta_t)
+
+        self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
+        self.loop = 1
         t_ = t_ + self.delta_t
-        while t_ <= self.t and loop <= self.loops:
+        while t_ <= self.t and self.loop <= self.loops:
             #1
             self.calculate_sat()
             self.set_lamb_2()
@@ -1763,20 +1831,23 @@ class Msclassic_bif:
             self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
             self.organize_Pf()
             self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
-            self.calculate_prolongation_op_het()
-            self.organize_op()
-            self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
-            self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
-            self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
-            self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
-            self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
-            self.organize_Pms()
-            self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-            self.Neuman_problem_4_3()
-            self.erro()
-            self.erro_2()
+            #self.calculate_prolongation_op_het()
+            #self.organize_op()
+            #self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+            #self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+            #self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+            #self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+            #self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+            #self.organize_Pms()
+            #self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+            #self.Neuman_problem_4_3()
+            #self.erro()
+            #self.erro_2()
             qmax, fi = self.div_max_3(self.pf_tag)
             self.cfl(fi, qmax)
-            self.mb.write_file('new_out_bif{0}.vtk'.format(loop))
-            loop += 1
+            #vmax, h, dfds = self.vel_max(self.pf_tag)
+            #self.cfl_2(vmax, h, dfds)
+            #print(self.delta_t)
+            self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
+            self.loop += 1
             t_ = t_ + self.delta_t
