@@ -33,8 +33,8 @@ class MsClassic_mono:
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
         self.sets = self.mb.get_entities_by_type_and_tag(
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
-        self.get_wells()
-        #self.get_wells_gr()
+        #self.get_wells()
+        self.get_wells_gr()
         self.set_perm()
         #self.set_perm_2()
         self.nf = len(self.all_fine_vols)
@@ -2686,9 +2686,6 @@ class MsClassic_mono:
                 print(volume_centroid)
                 print('\n')
 
-
-
-
     def run(self):
 
 
@@ -2729,8 +2726,8 @@ class MsClassic_mono:
     def run_2(self):
         #0
         self.calculate_restriction_op_2()
-        self.set_global_problem_vf_2()
-        #self.set_global_problem_gr_vf_2()
+        #self.set_global_problem_vf_2()
+        self.set_global_problem_gr_vf_2()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
         self.organize_Pf()
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
@@ -2761,7 +2758,7 @@ class MsClassic_mono:
         #self.erro_2()
         #self.add_gr()
         #self.obter_grafico()
-        self.teste_centroid()
+        #self.teste_centroid()
 
 
         #"""print(Epetra.NumMyCols(self.trilOP))

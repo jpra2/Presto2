@@ -26,8 +26,8 @@ class Msclassic_bif:
             primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 6
-        self.t = 100
+        self.loops = 200
+        self.t = 1000
         self.mi_w = 1.0
         self.mi_o = 1.3
         self.ro_w = 1000
@@ -281,17 +281,24 @@ class Msclassic_bif:
 
         for volume in self.all_fine_vols:
             gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-            div = self.div_upwind_3(volume, self.pf_tag)
-            fi = self.mb.tag_get_data(self.fi_tag, volume)[0][0]
-            sat1 = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
-            sat = sat1 + div*(self.delta_t/(fi*self.V))
-            if abs(div) < lim or sat1 == (1 - self.Sor):
-                continue
-
-            elif gid in self.wells_d:
+            if gid in self.wells_d:
                 tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)[0][0]
                 if tipo_de_poco == 1:
                     continue
+                else:
+                    pass
+            div = self.div_upwind_3(volume, self.pf_tag)
+            fi = 1.0 #self.mb.tag_get_data(self.fi_tag, volume)[0][0]
+            sat1 = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
+            sat = sat1 + div*(self.delta_t/(fi*self.V))
+            if abs(div) < lim or sat1 == (1 - self.Sor) or sat < sat1:
+                continue
+
+            elif sat > (1 - self.Sor):
+                sat = 1 - self.Sor
+
+            elif sat < 0:
+                sat = 0.0
 
             elif sat < 0 or sat > (1 - self.Sor):
                 print('Erro: saturacao invalida')
@@ -305,8 +312,8 @@ class Msclassic_bif:
                 print('loop: {0}'.format(self.loop))
 
                 sys.exit(0)
-            else:
-                 self.mb.tag_set_data(self.sat_tag, volume, sat)
+
+            self.mb.tag_set_data(self.sat_tag, volume, sat)
 
     def cfl(self, fi, qmax):
         cfl = 1.0
@@ -622,6 +629,7 @@ class Msclassic_bif:
         lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
 
         for adj in adjs_vol:
+            global_adj = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
             padj = self.mb.tag_get_data(p_tag, adj)[0][0]
             adj_centroid = self.mesh_topo_util.get_average_position([adj])
             direction = adj_centroid - volume_centroid
@@ -631,12 +639,16 @@ class Msclassic_bif:
             kadj = np.dot(np.dot(kadj,uni),uni)
             lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
             keq = self.kequiv(kvol, kadj)
-            grad_p = padj - pvol
+            if global_adj > global_volume:
+                grad_p = (padj - pvol)/float(np.dot(self.h, uni))
+            else:
+                grad_p = (pvol - padj)/float(np.dot(self.h, uni))
             lamb_eq = (lamb_w_vol + lamb_w_adj)/2.0
-            keq = (keq*lamb_eq*(np.dot(self.A, uni)))/(np.dot(self.h, uni))
+            keq = keq*lamb_eq*(np.dot(self.A, uni))
 
-            q = q + keq*grad_p
+            q = q + keq*(-grad_p)
             kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+
 
         return q
 
@@ -1152,6 +1164,8 @@ class Msclassic_bif:
 
     def pol_interp_2(self, S):
 
+        #import pdb; pdb.set_trace()
+
         S_temp = (S - self.Swc)/(1 - self.Swc - self.Sor)
         krw = (S_temp)**(self.nw)
         kro = (1 - S_temp)**(self.no)
@@ -1590,13 +1604,14 @@ class Msclassic_bif:
 
     def set_lamb(self):
         for volume in self.all_fine_vols:
-            S = mb.tag_get_data(self.sat_tag, volume)[0][0]
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+            S = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
             krw = self.pol_interp(S, self.Sw_r, self.krw_r)
             kro = self.pol_interp(S, self.Sw_r, self.kro_r)
             lamb_w = krw/self.mi_w
             lamb_o = kro/self.mi_o
-            mb.tag_set_data(self.lamb_w_tag, volume, lamb_w)
-            mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
+            self.mb.tag_set_data(self.lamb_w_tag, volume, lamb_w)
+            self.mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
 
     def set_lamb_2(self):
         for volume in self.all_fine_vols:
@@ -1788,8 +1803,8 @@ class Msclassic_bif:
         t_ = 0.0
         self.loop = 0
         self.set_sat_in()
-        #self.set_lamb()
-        self.set_lamb_2()
+        self.set_lamb()
+        #self.set_lamb_2()
         #self.calculate_restriction_op_2()
         self.set_global_problem_vf_2()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
@@ -1815,10 +1830,9 @@ class Msclassic_bif:
         #print(self.delta_t)
         vmax, h = self.vel_max(self.pf_tag)
         self.cfl_2(vmax, h)
-        print('vmax')
-        print(vmax)
-        print('delta_t')
-        print(self.delta_t)
+        print('delta_t: {0}'.format(self.delta_t))
+        print('loop: {0}'.format(self.loop))
+        print('\n')
 
         self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
         self.loop = 1
@@ -1826,7 +1840,8 @@ class Msclassic_bif:
         while t_ <= self.t and self.loop <= self.loops:
             #1
             self.calculate_sat()
-            self.set_lamb_2()
+            #self.set_lamb_2()
+            self.set_lamb()
             self.set_global_problem_vf_2()
             self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
             self.organize_Pf()
@@ -1847,7 +1862,9 @@ class Msclassic_bif:
             self.cfl(fi, qmax)
             #vmax, h, dfds = self.vel_max(self.pf_tag)
             #self.cfl_2(vmax, h, dfds)
-            #print(self.delta_t)
+            print('delta_t: {0}'.format(self.delta_t))
+            print('loop: {0}'.format(self.loop))
+            print('\n')
             self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
             self.loop += 1
             t_ = t_ + self.delta_t
