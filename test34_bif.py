@@ -26,14 +26,14 @@ class Msclassic_bif:
             primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 200
+        self.loops = 100
         self.t = 1000
         self.mi_w = 1.0
         self.mi_o = 1.3
-        self.ro_w = 1000
-        self.ro_o = 980
-        self.gama_w = 9800
-        self.gama_o = 10000
+        self.ro_w = 1.0
+        self.ro_o = 0.98
+        self.gama_w = 1.0
+        self.gama_o = 0.98
         self.gama_ = self.gama_w + self.gama_o
         self.Swi = 0.2
         self.Swc = 0.2
@@ -277,7 +277,7 @@ class Msclassic_bif:
             print('\n')"""
 
     def calculate_sat(self):
-        lim = 0.00001
+        lim = 10**(-13)
 
         for volume in self.all_fine_vols:
             gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
@@ -288,19 +288,21 @@ class Msclassic_bif:
                 else:
                     pass
             div = self.div_upwind_3(volume, self.pf_tag)
-            fi = 1.0 #self.mb.tag_get_data(self.fi_tag, volume)[0][0]
+            fi = 0.3 #self.mb.tag_get_data(self.fi_tag, volume)[0][0]
             sat1 = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
-            sat = sat1 + div*(self.delta_t/(fi*self.V))
-            if abs(div) < lim or sat1 == (1 - self.Sor) or sat < sat1:
+            sat = sat1 + div*1#(self.delta_t/(fi*self.V))
+            #if abs(div) < lim or sat1 == (1 - self.Sor) or sat < sat1:
+            #if abs(div) < lim or sat1 == (1 - self.Sor):
+            if abs(div) < lim or sat1 == 1.0:
                 continue
 
-            elif sat > (1 - self.Sor):
-                sat = 1 - self.Sor
+            #elif sat > (1 - self.Sor):
+            elif sat > 1:
+                #sat = 1 - self.Sor
+                sat = 1.0
 
-            elif sat < 0:
-                sat = 0.0
-
-            elif sat < 0 or sat > (1 - self.Sor):
+            #elif sat < 0 or sat > (1 - self.Sor):
+            elif sat < 0 or sat > 1:
                 print('Erro: saturacao invalida')
                 print('Saturacao: {0}'.format(sat))
                 print('Saturacao anterior: {0}'.format(sat1))
@@ -323,7 +325,7 @@ class Msclassic_bif:
     def cfl_2(self, vmax, h):
         cfl = 1.0
 
-        self.delta_t = (cfl*h)/float(vmax)
+        self.delta_t = (cfl*h)/float(vmax + 1)
 
     def create_tags(self, mb):
         self.Pc2_tag = mb.tag_get_handle(
@@ -1160,7 +1162,20 @@ class Msclassic_bif:
             mult = (S - x[i])*mult
             pol = pol + mult*a[i]
 
-        return pol
+        if y == self.krw_r:
+            if S <= 0.2:
+                pol = 0.0
+            else:
+                pass
+        elif y == self.kro_r:
+            if S <= 0:
+                pol = 1.0
+            elif S >= 0.9:
+                pol = 0.0
+            else:
+                pass
+
+        return abs(pol)
 
     def pol_interp_2(self, S):
 
@@ -1837,7 +1852,7 @@ class Msclassic_bif:
         self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
         self.loop = 1
         t_ = t_ + self.delta_t
-        while t_ <= self.t and self.loop <= self.loops:
+        while t_ <= self.t and self.loop < self.loops:
             #1
             self.calculate_sat()
             #self.set_lamb_2()

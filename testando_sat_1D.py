@@ -1,3 +1,4 @@
+import scipy.io as sio
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
@@ -15,16 +16,16 @@ class bifasico:
         self.h = L/float(nx)
         self.number_of_verts = nx + 1
         self.k = k
-        self.P = P
-        self.vols_p = vols_p
-        self.Q = Q
-        self.vols_q = vols_q
+        self.P = P #valor da pressao de vols_p
+        self.vols_p = vols_p #volumes com pressao prescrita
+        self.Q = Q #valor da vazao de vols_q
+        self.vols_q = vols_q #volumes com vazao prescrita
         self.create_centroids()
-        self.mat_sat = np.zeros((loops, nx))
-        self.mat_lamb_o = np.zeros((loops, nx))
-        self.mat_lamb_w = np.zeros((loops, nx))
-        self.mat_P = np.zeros((loops, nx))
-        self.list_of_time = []
+        self.mat_sat = np.zeros((loops, nx)) #matriz para armazenar os valores da saturacao
+        self.mat_lamb_o = np.zeros((loops, nx)) #matriz para armazenar os valores da mobilidade do oleo
+        self.mat_lamb_w = np.zeros((loops, nx)) #matriz para armazenar os valores da mobilidade da agua
+        self.mat_P = np.zeros((loops, nx)) #matriz para armazenar os valores da pressao
+        self.list_of_time = [] #lista dos tempos correntes
         self.t = t
         self.loops = loops
         self.mi_o = mi_o
@@ -52,12 +53,15 @@ class bifasico:
         self.Sor = 0.2
         self.Swr = 0.2
         self.V = A*self.h
+        #obs
+        self.delta_t = 1
+        self.mat_div = np.zeros((loops, nx))
+        self.mat_div_dif = np.zeros((loops, nx))
 
     def calculate_sat(self):
-        lim = 0.000001
-        #import pdb; pdb.set_trace()
+        lim = 1*(10**(-13))
+
         for i in range(self.nx):
-            #import pdb; pdb.set_trace()
             if i in self.vols_p:
                 index = self.vols_p.index(i)
                 if self.type_vols_p[index] == 1:
@@ -69,17 +73,14 @@ class bifasico:
             div = self.div_upwind_3(i)
             fi = 0.3
             sat1 = self.mat_sat[self.loop-1, i]
-            sat = sat1 + div*(self.delta_t/(fi*self.V))
-            if abs(div) < lim or sat1 == (1 - self.Sor):
+            sat = sat1 + div*0.1#(self.delta_t/(fi*self.V))
+            if abs(div) < lim: #or sat1 == (1 - self.Sor):
                 self.mat_sat[self.loop, i] = sat1
                 continue
+            elif sat > 1:
+                sat = 1.0
 
-            elif sat < 0:
-                sat = 0
-            elif sat > 1-self.Sor:
-                sat = 1-self.Sor
-
-            elif sat < 0 or sat > (1 - self.Sor):
+            elif sat < 0 or sat > 1:
                 print('Erro: saturacao invalida')
                 print('Saturacao: {0}'.format(sat))
                 print('Saturacao anterior: {0}'.format(sat1))
@@ -95,9 +96,11 @@ class bifasico:
             self.mat_sat[self.loop, i] = sat
 
     def cfl_2(self, vmax, dfds):
+
         cfl = 0.9
 
-        self.delta_t = (cfl*self.h)/float(vmax*dfds)
+        #self.delta_t = (cfl*self.h)/float(vmax*dfds)
+        self.delta_t = (cfl*self.h)/float(vmax + 1)
 
     def create_centroids(self):
         list_of_verts = []
@@ -138,6 +141,10 @@ class bifasico:
             keq = (keq*lamb_eq*self.A)
             q = q + (keq*(-grad_p))
 
+        self.mat_div[self.loop-1, i] = q
+        if self.loop > 1:
+            self.mat_div_dif[self.loop-2, i] = self.mat_div[self.loop-2, i] - self.mat_div[self.loop-1, i]
+
         return q
 
     def kequiv(self, k1, k2):
@@ -145,6 +152,9 @@ class bifasico:
         keq = (2*k1*k2)/(k1+k2)
 
         return keq
+
+    def load_sat_np(self):
+        self.satur = np.load('sat.npy')
 
     def pol_interp(self, S, x, y):
 
@@ -155,6 +165,7 @@ class bifasico:
         y = vetor que se deseja interpolar, y = f(x)
         S = saturacao
         """
+
 
         n = len(x)
         cont = 1
@@ -193,7 +204,20 @@ class bifasico:
             mult = (S - x[i])*mult
             pol = pol + mult*a[i]
 
-        return pol
+        if y == self.krw_r:
+            if S <= 0.2:
+                pol = 0.0
+            else:
+                pass
+        elif y == self.kro_r:
+            if S <= 0:
+                pol = 1.0
+            elif S >= 0.9:
+                pol = 0.0
+            else:
+                pass
+
+        return abs(pol)
 
     def read_perm_rel(self):
         with open("perm_rel.py", "r") as arq:
@@ -212,7 +236,6 @@ class bifasico:
             self.pc_r.append(float(a[3]))
 
     def set_lamb(self):
-
         for i in range(self.nx):
             S = self.mat_sat[self.loop, i]
             krw = self.pol_interp(S, self.Sw_r, self.krw_r)
@@ -286,6 +309,7 @@ class bifasico:
         v3 = 0
         dfds2 = 0
         for i in range(self.nx):
+
             v = 0.0
             pvol = self.Pf[i]
             k = self.k[i]
@@ -310,19 +334,32 @@ class bifasico:
                 if v > v2:
                     v2 = v
                     dfds2 = dfds
-        return v2, dfds
+        return v2, dfds2
+
+    def write_sat_to_np(self):
+        sat = np.zeros((self.loop, self.nx))
+        for i in range(self.loop):
+            sat[i] = self.mat_sat[i].copy()
+
+        # sio.savemat('sat.mat')
+        np.save('sat', sat)
+
+    def write_sat_to_matlab(self):
+        self.load_sat_np()
+        sio.savemat('satur', {'satur':self.satur})
 
     def run(self):
         t_ = 0
-        self.set_sat_in()
-        self.set_lamb()
+        self.set_sat_in() #setando a saturacao inicial, 1 para o primeiro volume e zero para os outros
+        self.set_lamb() # setando as mobilidades dos volumes
         self.transmissibilidade_malha_fina()
-        self.Pf = np.linalg.solve(self.trans_fine, self.b)
+        self.Pf = np.linalg.solve(self.trans_fine, self.b) #calculando a pressão
         self.mat_P[self.loop] = self.Pf
         self.list_of_time.append(t_)
-        vmax, dfds = self.vel_max()
-        self.cfl_2(vmax, dfds)
+        vmax, dfds = self.vel_max() #verifica a velocidade máxima
+        self.cfl_2(vmax, dfds) # calcula o passo de tempo
 
+        """
         fig = plt.figure()
         rect = fig.patch
         rect.set_facecolor('#31316e')
@@ -341,19 +378,26 @@ class bifasico:
         ax2.set_xlabel('posicao')
         ax2.set_ylabel('pressao')
         plt.show()
+        """
+
         print('delta_t:{0}'.format(self.delta_t))
         print('loop:{0}'.format(self.loop))
         print('vmax:{0}'.format(vmax))
         print('\n')
 
-
-
-
-
         self.loop = 1
         t_ = t_ + self.delta_t
-        while t_ <= self.t and self.loop <= self.loops and self.mat_sat[self.loop-1, self.nx-1] < 0.4:
-            self.calculate_sat()
+        #while t_ <= self.t and self.loop < self.loops and self.mat_sat[self.loop-1, self.nx-1] < 0.4:
+        #while self.loop < self.loops and self.mat_sat[self.loop-1, self.nx-1] < 0.4:
+        while self.loop < self.loops and self.mat_sat[self.loop-1, self.nx-1] < 0.8 :
+            """
+            self.calculate_sat() #calcula a saturacao no tempo corrente
+            self.set_lamb()
+            self.mat_P[self.loop] = self.Pf
+            """
+
+
+            self.calculate_sat() #calcula a saturacao no tempo corrente
             self.set_lamb()
             self.transmissibilidade_malha_fina()
             self.Pf = np.linalg.solve(self.trans_fine, self.b)
@@ -362,52 +406,60 @@ class bifasico:
             vmax, dfds = self.vel_max()
             self.cfl_2(vmax, dfds)
 
-            fig = plt.figure()
-            rect = fig.patch
-            rect.set_facecolor('#31312e')
-            ax1 = fig.add_subplot(2, 1, 1)
-            y = self.mat_sat[self.loop]
-            x = self.list_of_centroids
-            ax1.plot(x, y, 'r', linestyle = '--')
-            ax1.set_title('Saturacao X Tempo loop:{0}'.format(self.loop))
-            ax1.set_xlabel('posicao')
-            ax1.set_ylabel('saturacao')
-            ax2 = fig.add_subplot(2, 1, 2)
-            y = self.mat_P[self.loop]
-            x = self.list_of_centroids
-            ax2.plot(x, y, 'b', linestyle = '--')
-            ax2.set_title(' Pressao X Tempo loop:{0} '.format(self.loop))
-            ax2.set_xlabel('posicao')
-            ax2.set_ylabel('pressao')
-            plt.show()
-            plt.show()
+            """
+            if self.loop > 50:
+
+                fig = plt.figure()
+                rect = fig.patch
+                rect.set_facecolor('#31312e')
+                ax1 = fig.add_subplot(2, 1, 1)
+                y = self.mat_sat[self.loop]
+                x = self.list_of_centroids
+                ax1.plot(x, y, 'r', linestyle = '--')
+                ax1.set_title('Saturacao X Tempo loop:{0}'.format(self.loop))
+                ax1.set_xlabel('posicao')
+                ax1.set_ylabel('saturacao')
+                ax2 = fig.add_subplot(2, 1, 2)
+                y = self.mat_P[self.loop]
+                x = self.list_of_centroids
+                ax2.plot(x, y, 'b', linestyle = '--')
+                ax2.set_title(' Pressao X Tempo loop:{0} '.format(self.loop))
+                ax2.set_xlabel('posicao')
+                ax2.set_ylabel('pressao')
+                plt.show()
+                plt.show()
+
+
+
             print('delta_t:{0}'.format(self.delta_t))
             print('loop:{0}'.format(self.loop))
             print('vmax:{0}'.format(vmax))
             print('\n')
+
+            """
 
             t_ += self.delta_t
             self.loop += 1
             self.list_of_time.append(t_)
 
 
-nx = 9
+nx = 50
 ny = 1
 nz = 1
-Lx = 9.0
+Lx = 10
 Ly = 9.0
 Lz = 9.0
 L = Lx
-A = L**2
+A = 1
 k = np.repeat(1.0, nx)
 P = [1, 0]
-vols_p = [0, 8]
+vols_p = [0, nx-1]
 type_vols_p = [1, 0]#1 = injetor, 0 = produtor
 Q = []
 vols_q = []
 type_vols_q = []
 t = 500
-loops = 30
+loops = 5000
 mi_o = 1.3
 mi_w = 1.0
 fi = 0.3
@@ -415,4 +467,33 @@ dim = 1
 
 sim = bifasico(nx, ny, nz, Lx, Ly, Lz, A, k, P,
 vols_p, type_vols_p, Q, vols_q, type_vols_q, t, loops, mi_o, mi_w, fi, dim)
-sim.run()
+# sim.run()
+# sim.write_sat()
+sim.write_sat_to_matlab()
+"""
+print('mat_div')
+for i in sim.mat_div:
+    print(i)
+
+print('\n')
+print('mat_sat')
+for i in sim.mat_sat:
+    print(i)
+
+print('\n')
+print('mat_div_dif')
+for i in sim.mat_div_dif:
+    print(i)
+print('\n')
+print('mat_lamb_w')
+for i in sim.mat_lamb_w:
+    print(i)
+"""
+
+
+"""
+elif sat < 0:
+    sat = 0
+elif sat > 1-self.Sor:
+    sat = 1-self.Sor
+"""
