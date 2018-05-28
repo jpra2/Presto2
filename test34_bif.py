@@ -7,6 +7,9 @@ import time
 import sys
 
 class Msclassic_bif:
+    """
+    As funcoes estao organizadas por ordem allfabetica
+    """
     def __init__(self):
         self.comm = Epetra.PyComm()
         self.mb = core.Core()
@@ -411,6 +414,121 @@ class Msclassic_bif:
         self.wells_tag = mb.tag_get_handle("WELLS")
         self.tipo_de_poco_tag = mb.tag_get_handle("TIPO_DE_POCO")
 
+    def Dirichlet_problem(self):
+        #0
+        colocation_points = self.mb.get_entities_by_type_and_tag(
+            0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
+        sets = []
+        for col in colocation_points:
+            #1
+            #col = mb.get_entities_by_handle(col)[0]
+            sets.append(self.mb.get_entities_by_handle(col)[0])
+        #0
+        sets = set(sets)
+        for primal in self.primals:
+            #1
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            volumes_in_primal = self.get_volumes_in_interfaces(
+            fine_elems_in_primal, primal_id, flag = 2)
+            all_volumes = list(fine_elems_in_primal)
+            all_volumes_ic = self.all_fine_vols_ic & set(all_volumes)
+            gids_vols_ic = self.mb.tag_get_data(self.global_id_tag, all_volumes_ic, flat=True)
+            # gids_vols_ic = volumes no primal que sao icognitas
+            # ou seja volumes no primal excluindo os que tem pressao prescrita
+            map_volumes = dict(zip(gids_vols_ic, range(len(gids_vols_ic))))
+            # map_volumes = mapeamento local
+            std_map = Epetra.Map(len(all_volumes_ic), 0, self.comm)
+            b = Epetra.Vector(std_map)
+            A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+            dim = len(all_volumes_ic)
+            # b_np = np.zeros(dim)
+            # A_np = np.zeros((dim, dim))
+            for volume in all_volumes_ic:
+                #2
+                soma = 0
+                temp_id = []
+                temp_k = []
+                volume_centroid = self.mesh_topo_util.get_average_position([volume])
+                adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+                lamb_o_vol = self.mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
+                if (volume in sets) or (volume in volumes_in_primal):
+                    #3
+                    temp_k.append(1.0)
+                    temp_id.append(map_volumes[global_volume])
+                    b[map_volumes[global_volume]] = self.mb.tag_get_data(self.pms_tag, volume)[0]
+                    # b_np[map_volumes[global_volume]] = self.mb.tag_get_data(self.pms_tag, volume)[0]
+                #2
+                else:
+                    #3
+                    for adj in adj_volumes:
+                        #4
+                        global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                        adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                        direction = adj_centroid - volume_centroid
+                        uni = self.unitary(direction)
+                        kvol = np.dot(np.dot(kvol,uni),uni)
+                        kvol = kvol*(lamb_w_vol + lamb_o_vol)
+                        kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                        kadj = np.dot(np.dot(kadj,uni),uni)
+                        lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
+                        lamb_o_adj = self.mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
+                        kadj = kadj*(lamb_w_adj + lamb_o_adj)
+                        keq = self.kequiv(kvol, kadj)
+                        keq = keq*(np.dot(self.A, uni))/(np.dot(self.h, uni))
+                        soma = soma + keq
+                        if global_adj in self.wells_d:
+                            #5
+                            index = self.wells_d.index(global_adj)
+                            b[map_volumes[global_volume]] += self.set_p[index]*(keq)
+                            # b_np[map_volumes[global_volume]] += self.set_p[index]*(keq)
+                        #4
+                        else:
+                            #5
+                            temp_id.append(map_volumes[global_adj])
+                            temp_k.append(-keq)
+                        #4
+                        kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                    #3
+                    temp_k.append(soma)
+                    temp_id.append(map_volumes[global_volume])
+                    if global_volume in self.wells_n:
+                        #4
+                        index = self.wells_n.index(global_volume)
+                        tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)[0]
+                        if tipo_de_poco == 1:
+                            #5
+                            b[map_volumes[global_volume]] += self.set_q[index]
+                            # b_np[map_volumes[global_volume]] += self.set_q[index]
+                        #4
+                        else:
+                            #5
+                            b[map_volumes[global_volume]] += -self.set_q[index]
+                            # b_np[map_volumes[global_volume]] += -self.set_q[index]
+                #2
+                A.InsertGlobalValues(map_volumes[global_volume], temp_k, temp_id)
+                # A_np[map_volumes[global_volume], temp_id] = temp_k
+            #1
+            A.FillComplete()
+            x = self.solve_linear_problem(A, b, dim)
+            # x_np = np.linalg.solve(A_np, b_np)
+            for volume in all_volumes_ic:
+                #2
+                global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                self.mb.tag_set_data(self.pcorr_tag, volume, x[map_volumes[global_volume]])
+                # self.mb.tag_set_data(self.pms2_tag, volume, x_np[map_volumes[global_volume]])
+            #1
+            for volume in set(all_volumes) - all_volumes_ic:
+                #2
+                global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                index = self.wells_d.index(global_volume)
+                p = self.set_p[index]
+                self.mb.tag_set_data(self.pcorr_tag, volume, p)
+                # self.mb.tag_set_data(self.pms2_tag, volume, p)
+
     def div_max(self, p_tag):
         q2 = 0.0
         fi = 0.0
@@ -671,20 +789,19 @@ class Msclassic_bif:
     def get_volumes_in_interfaces(self, fine_elems_in_primal, primal_id, **options):
 
         """
-        obtem uma lista com os elementos dos primais que estao na interface do primal
-        que se quer saber
+        obtem uma lista com os elementos dos primais adjacentes que estao na interface do primal corrente
+        (primal_id)
 
-        se a flag == 1 retorna um mapeamento local da seguinte maneira:
-        id_gids = dict(zip(gids_in_primal + gids_in_interface), range(len(gids_in_primal + gids_in_interface)))
-        gids_in_primal == lista contendo os ids globais dos volumes dentro do respectivo primal
-        gids_in_interface == lista contendo os ids globais dos volumes na interface do respectivo primal
+        se flag == 1 alem dos volumes na interface dos primais adjacentes (volumes_in_interface)
+        retorna tambem os volumes no primal que estao na interface (volumes_in_primal)
 
+        se flag == 2 retorna apenas os volumes do primal corrente que estao na interface (volumes_in_primal)
 
         """
         #0
+        volumes_in_primal = []
         volumes_in_interface = []
-        gids_in_interface = []
-        gids_in_primal = self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True)
+        # gids_in_primal = self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True)
         for volume in fine_elems_in_primal:
             #1
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
@@ -697,15 +814,16 @@ class Msclassic_bif:
                 if primal_adj != primal_id:
                     #3
                     volumes_in_interface.append(adj)
-                    global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
-                    gids_in_interface.append(global_adj)
+                    volumes_in_primal.append(volume)
         #0
-        local_id = list(gids_in_primal) + gids_in_interface
-        local_id = dict(zip(local_id, range(len(local_id))))
         all_volumes = list(fine_elems_in_primal) + volumes_in_interface
         if options.get("flag") == 1:
             #1
-            return volumes_in_interface, local_id
+            return volumes_in_interface, volumes_in_primal
+        #0
+        elif options.get("flag") == 2:
+            #1
+            return volumes_in_primal
         #0
         else:
             #1
