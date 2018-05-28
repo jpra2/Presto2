@@ -29,7 +29,7 @@ class Msclassic_bif:
             primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 100
+        self.loops = 10
         self.t = 1000
         self.mi_w = 1.0
         self.mi_o = 1.3
@@ -280,7 +280,7 @@ class Msclassic_bif:
             print('\n')"""
 
     def calculate_sat(self):
-        lim = 10**(-13)
+        lim = 10**(-10)
 
         for volume in self.all_fine_vols:
             gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
@@ -293,19 +293,24 @@ class Msclassic_bif:
             div = self.div_upwind_3(volume, self.pf_tag)
             fi = 0.3 #self.mb.tag_get_data(self.fi_tag, volume)[0][0]
             sat1 = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
-            sat = sat1 + div*1#(self.delta_t/(fi*self.V))
+            sat = sat1 + div*(self.delta_t/(fi*self.V))
             #if abs(div) < lim or sat1 == (1 - self.Sor) or sat < sat1:
             #if abs(div) < lim or sat1 == (1 - self.Sor):
-            if abs(div) < lim or sat1 == 1.0:
+            if abs(div) < lim or sat1 == 0.8:
                 continue
 
             #elif sat > (1 - self.Sor):
-            elif sat > 1:
+            elif sat > 0.8:
                 #sat = 1 - self.Sor
-                sat = 1.0
+                print("Sat > 0.8")
+                print(sat)
+                print('gid')
+                print(gid)
+                print('\n')
+                sat = 0.8
 
             #elif sat < 0 or sat > (1 - self.Sor):
-            elif sat < 0 or sat > 1:
+            elif sat < 0 or sat > 0.8:
                 print('Erro: saturacao invalida')
                 print('Saturacao: {0}'.format(sat))
                 print('Saturacao anterior: {0}'.format(sat1))
@@ -315,6 +320,7 @@ class Msclassic_bif:
                 print('V: {0}'.format(self.V))
                 print('delta_t: {0}'.format(self.delta_t))
                 print('loop: {0}'.format(self.loop))
+
 
                 sys.exit(0)
 
@@ -719,15 +725,17 @@ class Msclassic_bif:
             kadj = mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
             kadj = np.dot(np.dot(kadj,uni),uni)
             lamb_w_adj = mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
-            grad_p = padj - pvol
+            grad_p = (padj - pvol)/float((np.dot(self.h, uni)))
 
             if grad_p > 0:
-                keq = (lamb_w_adj*kadj*(np.dot(self.A, uni)))/(np.dot(self.h, uni))
+                # keq = (lamb_w_adj*kadj*(np.dot(self.A, uni)))/(np.dot(self.h, uni))
+                keq = lamb_w_adj*kadj
 
             else:
-                keq = (lamb_w_vol*kvol*(np.dot(self.A, uni)))/(np.dot(self.h, uni))
+                # keq = (lamb_w_vol*kvol*(np.dot(self.A, uni)))/(np.dot(self.h, uni))
+                keq = lamb_w_vol*kvol
 
-            q = q + keq*grad_p
+            q = q + keq*grad_p*(np.dot(self.A, uni))
             kvol = mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
         return q
@@ -740,16 +748,25 @@ class Msclassic_bif:
         """
 
         q = 0.0
+        list_sat = []
+        list_lbw = []
+        list_gid = []
+        list_grad = []
+        list_q = []
+        list_p = []
+        list_lbeq = []
 
         pvol = self.mb.tag_get_data(p_tag, volume)[0][0]
         adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
         volume_centroid = self.mesh_topo_util.get_average_position([volume])
         global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+        sat_volume = self.mb.tag_get_data(self.sat_tag, volume, flat=True)[0]
         kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
         lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
 
         for adj in adjs_vol:
-            global_adj = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+            sat_adj = self.mb.tag_get_data(self.sat_tag, adj, flat=True)[0]
             padj = self.mb.tag_get_data(p_tag, adj)[0][0]
             adj_centroid = self.mesh_topo_util.get_average_position([adj])
             direction = adj_centroid - volume_centroid
@@ -759,15 +776,31 @@ class Msclassic_bif:
             kadj = np.dot(np.dot(kadj,uni),uni)
             lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
             keq = self.kequiv(kvol, kadj)
-            if global_adj > global_volume:
-                grad_p = (padj - pvol)/float(np.dot(self.h, uni))
-            else:
-                grad_p = (pvol - padj)/float(np.dot(self.h, uni))
+            # if global_adj > global_volume:
+            #     grad_p = (padj - pvol)/float(np.dot(self.h, uni))
+            # else:
+            #     grad_p = (pvol - padj)/float(np.dot(self.h, uni))
+            grad_p = (padj - pvol)/float(np.dot(self.h, uni))
             lamb_eq = (lamb_w_vol + lamb_w_adj)/2.0
             keq = keq*lamb_eq*(np.dot(self.A, uni))
-
-            q = q + keq*(-grad_p)
+            q = q + keq*(grad_p)
+            list_sat.append(sat_adj)
+            list_lbw.append(lamb_w_adj)
+            list_gid.append(global_adj)
+            list_grad.append(grad_p)
+            list_q.append(keq*(grad_p))
+            list_p.append(padj)
+            list_lbeq.append(lamb_eq)
             kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+        list_sat.append(sat_volume)
+        list_lbw.append(lamb_w_vol)
+        list_gid.append(global_volume)
+        list_q.append(q)
+        list_p.append(pvol)
+
+        if q < 0:
+            import pdb; pdb.set_trace()
+
 
 
         return q
@@ -834,6 +867,8 @@ class Msclassic_bif:
         wells_n = []
         set_p = []
         set_q = []
+        wells_inj = []
+        wells_prod = []
 
         wells_set = self.mb.tag_get_data(self.wells_tag, 0, flat=True)[0]
         self.wells = self.mb.get_entities_by_handle(wells_set)
@@ -843,7 +878,7 @@ class Msclassic_bif:
             valor_da_prescricao = self.mb.tag_get_data(self.valor_da_prescricao_tag, well, flat=True)[0]
             tipo_de_prescricao = self.mb.tag_get_data(self.tipo_de_prescricao_tag, well, flat=True)[0]
             #raio_do_poco = mb.tag_get_data(raio_do_poco_tag, well, flat=True)[0]
-            #tipo_de_poco = mb.tag_get_data(tipo_de_poco_tag, well, flat=True)[0]
+            tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, well, flat=True)[0]
             #tipo_de_fluido = mb.tag_get_data(tipo_de_fluido_tag, well, flat=True)[0]
             #pwf = mb.tag_get_data(pwf_tag, well, flat=True)[0]
             if tipo_de_prescricao == 0:
@@ -852,11 +887,17 @@ class Msclassic_bif:
             else:
                 wells_n.append(global_id)
                 set_q.append(valor_da_prescricao)
+            if tipo_de_poco == 1:
+                wells_inj.append(global_id)
+            else:
+                wells_prod.append(global_id)
 
         self.wells_d = wells_d
         self.wells_n = wells_n
         self.set_p = set_p
         self.set_q = set_q
+        self.wells_inj = wells_inj
+        self.wells_prod = wells_prod
 
     def kequiv(self, k1, k2):
         #keq = ((2*k1*k2)/(h1*h2))/((k1/h1) + (k2/h2))
@@ -1780,11 +1821,11 @@ class Msclassic_bif:
 
 
         for volume in self.all_fine_vols:
-            gid = self.mb.tag_get_data(self.global_id_tag, volume)
+            gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
             if gid in l:
-                self.mb.tag_set_data(self.sat_tag, volume, 1.0)
+                self.mb.tag_set_data(self.sat_tag, volume, 0.8)
             else:
-                self.mb.tag_set_data(self.sat_tag, volume, 0.0)
+                self.mb.tag_set_data(self.sat_tag, volume, 0.2)
 
     def solve_linear_problem(self, A, b, n):
         std_map = Epetra.Map(n, 0, self.comm)
@@ -1936,8 +1977,8 @@ class Msclassic_bif:
         t_ = 0.0
         self.loop = 0
         self.set_sat_in()
-        self.set_lamb()
-        #self.set_lamb_2()
+        #self.set_lamb()
+        self.set_lamb_2()
         #self.calculate_restriction_op_2()
         self.set_global_problem_vf_2()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
@@ -1970,11 +2011,12 @@ class Msclassic_bif:
         self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
         self.loop = 1
         t_ = t_ + self.delta_t
+
         while t_ <= self.t and self.loop < self.loops:
             #1
             self.calculate_sat()
-            #self.set_lamb_2()
-            self.set_lamb()
+            self.set_lamb_2()
+            #self.set_lamb()
             self.set_global_problem_vf_2()
             self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
             self.organize_Pf()
