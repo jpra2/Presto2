@@ -29,20 +29,21 @@ class Msclassic_bif:
             primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
-        self.loops = 10
-        self.t = 1000
-        self.mi_w = 1.0
-        self.mi_o = 1.3
-        self.ro_w = 1.0
-        self.ro_o = 0.98
-        self.gama_w = 1.0
-        self.gama_o = 0.98
+        #self.ident_primal = remapeamento dos ids globais
+        self.loops = 10 # loops totais
+        self.t = 1000 # tempo total de simulacao
+        self.mi_w = 1.0 # viscosidade da agua
+        self.mi_o = 1.3 # viscosidade do oleo
+        self.ro_w = 1.0 # densidade da agua
+        self.ro_o = 0.98 # densidade do oleo
+        self.gama_w = 1.0 #  peso especifico da agua
+        self.gama_o = 0.98 # peso especifico do oleo
         self.gama_ = self.gama_w + self.gama_o
-        self.Swi = 0.2
-        self.Swc = 0.2
-        self.Sor = 0.2
-        self.nw = 2
-        self.no = 2
+        self.Swi = 0.2 # saturacao inicial para escoamento da agua
+        self.Swc = 0.2 # saturacao de agua conata
+        self.Sor = 0.2 # saturacao residual de oleo
+        self.nw = 2 # expoente da agua para calculo da permeabilidade relativa
+        self.no = 2 # expoente do oleo para calculo da permeabilidade relativa
         self.set_k()
         self.set_fi()
         self.get_wells()
@@ -64,7 +65,8 @@ class Msclassic_bif:
 
                         self.neigh_wells_d.append(adj)
 
-        self.all_fine_vols_ic = set(self.all_fine_vols) - set(self.elems_wells_d) #volumes da malha fina que sao icognitas
+        self.all_fine_vols_ic = set(self.all_fine_vols) - set(self.elems_wells_d)
+        # self.all_volumes_ic =  volumes da malha fina que sao icognitas
         gids_vols_ic = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols_ic, flat=True)
         self.map_vols_ic = dict(zip(gids_vols_ic, range(len(gids_vols_ic))))
         self.map_vols_ic_2 = dict(zip(range(len(gids_vols_ic)), gids_vols_ic))
@@ -244,6 +246,9 @@ class Msclassic_bif:
             print('\n')"""
 
     def calculate_restriction_op_2(self):
+        """
+        operador de restricao excluindo as colunas dos volumes com pressao prescrita
+        """
         #0
         std_map = Epetra.Map(len(self.all_fine_vols_ic), 0, self.comm)
         self.trilOR = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
@@ -280,6 +285,9 @@ class Msclassic_bif:
             print('\n')"""
 
     def calculate_sat(self):
+        """
+        calcula a saturacao do passo de tempo corrente
+        """
         lim = 10**(-10)
 
         for volume in self.all_fine_vols:
@@ -327,11 +335,17 @@ class Msclassic_bif:
             self.mb.tag_set_data(self.sat_tag, volume, sat)
 
     def cfl(self, fi, qmax):
+        """
+        cfl usando fluxo maximo
+        """
         cfl = 1.0
 
         self.delta_t = cfl*(fi*self.V)/float(qmax)
 
     def cfl_2(self, vmax, h):
+        """
+        cfl usando velocidade maxima
+        """
         cfl = 1.0
 
         self.delta_t = (cfl*h)/float(vmax + 1)
@@ -421,6 +435,10 @@ class Msclassic_bif:
         self.tipo_de_poco_tag = mb.tag_get_handle("TIPO_DE_POCO")
 
     def Dirichlet_problem(self):
+        """
+        recalculo das pressoes dentro dos primais usando como condicao de contorno
+        pressao prescrita nos volumes da interface de cada primal
+        """
         #0
         colocation_points = self.mb.get_entities_by_type_and_tag(
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
@@ -613,7 +631,8 @@ class Msclassic_bif:
 
     def div_max_3(self, p_tag):
         """
-        Calcula tambem a variacao do fluxo fracionario com a saturacao
+        Verifica qual é o fluxo maximo que sai do volume de controle multiplicado pelo dfds
+        dfds = variacao do fluxo fracionario com a saturacao
         """
         lim = 0.00001
         q2 = 0.0
@@ -744,7 +763,7 @@ class Msclassic_bif:
 
         """
         a mobilidade da interface é dada pela media das mobilidades
-
+        calcula o divergente de agua do volume para calcular a saturacao
         """
 
         q = 0.0
@@ -863,6 +882,16 @@ class Msclassic_bif:
             return volumes_in_interface
 
     def get_wells(self):
+        """
+        obtem os gids dos volumes dos pocos
+
+        wells_d = gids do poco com pressao prescrita
+        wells_n = gids do poco com vazao prescrita
+        set_p = valor da pressao
+        set_q = valor da vazao
+        wells_inj = gids dos pocos injetores
+        wells_prod = gids dos pocos produtores
+        """
         wells_d = []
         wells_n = []
         set_p = []
@@ -906,6 +935,9 @@ class Msclassic_bif:
         return keq
 
     def modificar_matriz(self, A, rows, columns):
+        """
+        realoca a matriz para o tamanho de linhas 'rows' e colunas 'columns'
+        """
 
         row_map = Epetra.Map(rows, 0, self.comm)
         col_map = Epetra.Map(columns, 0, self.comm)
@@ -923,6 +955,9 @@ class Msclassic_bif:
         return C
 
     def modificar_vetor(self, v, nc):
+        """
+        realoca o tamanho do vetor 'v' para o tamanho 'nc'
+        """
 
         std_map = Epetra.Map(nc, 0, self.comm)
         x = Epetra.Vector(std_map)
@@ -934,6 +969,9 @@ class Msclassic_bif:
         return x
 
     def multimat_vector(self, A, row, b):
+        """
+        multiplica a matriz A pelo vetor 'b', 'row' é o numero de linhas de A ou tamanho de b
+        """
 
         std_map = Epetra.Map(row, 0, self.comm)
         c = Epetra.Vector(std_map)
@@ -1083,6 +1121,9 @@ class Msclassic_bif:
                 self.mb.tag_set_data(self.pms2_tag, volume, x_np[i])
 
     def Neuman_problem_4_3(self):
+        """
+        recalcula as pressoes em cada primal usando fluxo prescrito nas interfaces do primal
+        """
         #0
         colocation_points = self.mb.get_entities_by_type_and_tag(
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
@@ -1215,6 +1256,9 @@ class Msclassic_bif:
                 self.mb.tag_set_data(self.pms2_tag, volume, p)
 
     def organize_op(self):
+        """
+        elimina as linhas do operador de prolongamento que se referem aos volumes com pressao prescrita
+        """
         #0
         std_map = Epetra.Map(len(self.all_fine_vols_ic), 0, self.comm)
         trilOP2 = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
@@ -1340,13 +1384,18 @@ class Msclassic_bif:
 
         #import pdb; pdb.set_trace()
 
-        S_temp = (S - self.Swc)/(1 - self.Swc - self.Sor)
-        krw = (S_temp)**(self.nw)
-        kro = (1 - S_temp)**(self.no)
+        # S_temp = (S - self.Swc)/(1 - self.Swc - self.Sor)
+        # krw = (S_temp)**(self.nw)
+        # kro = (1 - S_temp)**(self.no)
+        krw = ((S - self.Swc)/float(1 - self.Swc - self.Sor))**(self.nw)
+        kro = ((1 - S - self.Swc)/float(1 - self.Swc - self.Sor))**(self.no)
 
         return krw, kro
 
     def pymultimat(self, A, B, nf):
+        """
+        multiplica a matriz A pela B
+        """
 
         nf_map = Epetra.Map(nf, 0, self.comm)
 
@@ -1359,6 +1408,9 @@ class Msclassic_bif:
         return C
 
     def read_perm_rel(self):
+        """
+        le o arquivo perm_rel.py para usar na funcao pol_interp
+        """
         with open("perm_rel.py", "r") as arq:
             text = arq.readlines()
 
@@ -1416,16 +1468,19 @@ class Msclassic_bif:
         hmin = min(hx, hy, hz)
         V = hx*hy*hz
 
-        self.nx = nx
-        self.ny = ny
-        self.nz = nz
-        self.h2 = h2
-        self.h = h
-        self.V = V
-        self.A = a
-        self.tz = tz
+        self.nx = nx # numero de volumes na direcao x
+        self.ny = ny # numero de volumes na direcao y
+        self.nz = nz # numero de volumes na direcao z
+        self.h2 = h2 # vetor com os tamanhos ao quadrado de cada volume
+        self.h = h # vetor com os tamanhos de cada volume
+        self.V = V # volume de um volume da malha fina
+        self.A = a # vetor com as areas
+        self.tz = tz # tamanho total na direcao z
 
     def set_erro(self):
+        """
+        modulo da diferenca entre a pressao da malha fina e a multiescala
+        """
         for volume in self.all_fine_vols:
             Pf = mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
             Pms = mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
@@ -1768,6 +1823,9 @@ class Msclassic_bif:
         self.trans_fine.FillComplete()
 
     def set_k(self):
+        """
+        seta as permeabilidades dos volumes
+        """
 
         perm_tensor = [1, 0.0, 0.0,
                         0.0, 1, 0.0,
@@ -1777,6 +1835,9 @@ class Msclassic_bif:
             self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)
 
     def set_lamb(self):
+        """
+        seta o lambda usando pol_interp
+        """
         for volume in self.all_fine_vols:
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
             S = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
@@ -1788,6 +1849,9 @@ class Msclassic_bif:
             self.mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
 
     def set_lamb_2(self):
+        """
+        seta o lambda usando pol_interp_2
+        """
         for volume in self.all_fine_vols:
             S = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
             krw, kro = self.pol_interp_2(S)
@@ -1797,6 +1861,9 @@ class Msclassic_bif:
             self.mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
 
     def set_Pc(self):
+        """
+        seta as pressoes da malha grossa primal
+        """
 
         for primal in self.primals:
 
@@ -1811,6 +1878,9 @@ class Msclassic_bif:
                 np.repeat(value, len(fine_elems_in_primal)))
 
     def set_sat_in(self):
+        """
+        seta a saturacao inicial
+        """
 
         l = []
         for volume in self.wells:
@@ -1828,6 +1898,9 @@ class Msclassic_bif:
                 self.mb.tag_set_data(self.sat_tag, volume, 0.2)
 
     def solve_linear_problem(self, A, b, n):
+        """
+        resolve o sistema linear da matriz A e termo fonte b
+        """
         std_map = Epetra.Map(n, 0, self.comm)
 
         x = Epetra.Vector(std_map)
@@ -1856,6 +1929,9 @@ class Msclassic_bif:
         mb.tag_set_data(self.pf2_tag, self.all_fine_vols, np.asarray(self.Pf2))
 
     def unitary(self, l):
+        """
+        obtem o vetor unitario na direcao positiva de l
+        """
         uni = l/np.linalg.norm(l)
         uni = uni*uni
 
@@ -1863,7 +1939,7 @@ class Msclassic_bif:
 
     def vel_max(self, p_tag):
         """
-        Calcula tambem a variacao do fluxo fracionario com a saturacao
+        Calcula a velocidade maxima tambem a variacao do fluxo fracionario com a saturacao
         """
         lim = 0.00001
         v2 = 0.0
