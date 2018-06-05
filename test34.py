@@ -2784,7 +2784,7 @@ class MsClassic_mono:
                         0.0, 0.5, 0.0,
                         0.0, 0.0, 0.5]
 
-        gid_lim = 403
+        gid_lim = 323
 
         for volume in self.all_fine_vols:
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
@@ -2810,9 +2810,6 @@ class MsClassic_mono:
         #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
         #     else:
         #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
-
-
-
 
     def solve_linear_problem(self, A, b, n):
 
@@ -2986,7 +2983,6 @@ class MsClassic_mono:
             for i in range(len(p2)):
                 arq.write('{0},{1}'.format(pos[i], p2[i]))
                 arq.write('\n')
-
 
     def teste_centroid(self):
         l1 = list(range(self.nx))
