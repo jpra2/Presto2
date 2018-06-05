@@ -6,7 +6,6 @@ from PyTrilinos import Epetra, AztecOO, EpetraExt  # , Amesos
 import time
 import math
 
-
 class MsClassic_mono:
     def __init__(self, ind = False):
         """
@@ -35,8 +34,8 @@ class MsClassic_mono:
             0, types.MBENTITYSET, self.collocation_point_tag, np.array([None]))
         self.get_wells()
         #self.get_wells_gr()
-        self.set_perm()
-        #self.set_perm_2()
+        #self.set_perm()
+        self.set_perm_2()
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
         gids = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols , flat = True)
@@ -105,7 +104,7 @@ class MsClassic_mono:
                 volume_centroid = self.mesh_topo_util.get_average_position([volume])
                 if global_volume in self.wells_d:
                     index = self.wells_d.index(global_volume)
-                    b[id_gids[global_volume]] = self.set_p[index] + (self.tz-volume_centroid[2])*self.gama
+                    b[id_gids[global_volume]] = self.set_p[index] #+ (self.tz-volume_centroid[2])*self.gama
                     b_np[id_gids[global_volume]] = self.set_p[index] + (self.tz-volume_centroid[2])*self.gama
                     A.InsertGlobalValues(id_gids[global_volume], [1.0], [id_gids[global_volume]])
                     A_np[id_gids[global_volume], id_gids[global_volume]] = 1.0
@@ -361,7 +360,7 @@ class MsClassic_mono:
             values = []
             ids = []
             for adj in adj_volumes:
-                if adj in id_map:
+                if adj in elems:
                     k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                     centroid_adj = self.mesh_topo_util.get_average_position([adj])
                     direction = centroid_adj - centroid_elem
@@ -485,6 +484,110 @@ class MsClassic_mono:
 
 
         self.mb.tag_set_data(corretion_tag, elems, np.asarray(x))
+
+    def calculate_local_problem_het_corretion_gr(self, elems, lesser_dim_meshsets, col):
+        #0
+        boundary_elms = set()
+        boundary_elms.add(col)
+        for ms in lesser_dim_meshsets:
+            #1
+            lesser_dim_elems = self.mb.get_entities_by_handle(ms)
+            for elem in lesser_dim_elems:
+                #2
+                if elem in boundary_elms:
+                    continue
+                #2
+                boundary_elms.add(elem)
+        #0
+        all_vols_ic = set(elems) - boundary_elms
+        gids_ic = self.mb.tag_get_data(self.global_id_tag, all_vols_ic, flat=True)
+        dim = len(all_vols_ic)
+        std_map = Epetra.Map(dim, 0, self.comm)
+        linear_vals = np.arange(0, dim)
+        id_gids = dict(zip(gids_ic, linear_vals))
+        gids_bound = self.mb.tag_get_data(self.global_id_tag, boundary_elms, flat=True)
+        gids = self.mb.tag_get_data(self.global_id_tag, elems, flat=True)
+        b = Epetra.Vector(std_map)
+        x = Epetra.Vector(std_map)
+        A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+        A_np = np.zeros((dim, dim))
+        b_np = np.zeros(dim)
+        for volume in all_vols_ic:
+            #1
+            soma = 0
+            soma2 = 0
+            soma3 = 0
+            temp_glob_adj = []
+            temp_k = []
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            for adj in adj_volumes:
+                #2
+                if adj in boundary_elms:
+                    continue
+                global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                uni = self.unitary(direction)
+                altura = adj_centroid[2]
+                z = uni[2]
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                keq = self.kequiv(kvol, kadj)
+                keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                if z == 1.0:
+                    #3
+                    keq2 = keq*self.gama
+                    soma2 = soma2 - keq2
+                    soma3 = soma3 + (keq2*(self.tz-altura))
+                    #print(altura)
+                #2
+                temp_glob_adj.append(id_gids[global_adj])
+                temp_k.append(-keq)
+                soma = soma + keq
+            #1
+            soma2 = soma2*(self.tz-volume_centroid[2])
+            soma2 = (soma2 + soma3)
+            b[id_gids[global_volume]] += soma2
+            b_np[id_gids[global_volume]] += soma2
+            temp_k.append(soma)
+            temp_glob_adj.append(id_gids[global_volume])
+            A.InsertGlobalValues(id_gids[global_volume], temp_k, temp_glob_adj)
+            A_np[id_gids[global_volume], temp_glob_adj] = temp_k
+            # temp_k = []
+            # temp_glob_adj = []
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+
+        A.FillComplete()
+
+        # for elem in elems:
+        #     i = id_map[elem]
+        #     gid = self.mb.tag_get_data(self.global_id_tag, elem, flat=True)[0]
+        #     print('A')
+        #     print(A[i])
+        #     print('b')
+        #     print(b[i])
+        #     print('i')
+        #     print(i)
+        #     print('gid')
+        #     print(gid)
+        #     print('\n')
+
+
+        linearProblem = Epetra.LinearProblem(A, x, b)
+        solver = AztecOO.AztecOO(linearProblem)
+        # AZ_last, AZ_summary, AZ_warnings
+        solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
+        solver.Iterate(1000, 1e-9)
+        x_np = np.linalg.solve(A_np, b_np)
+        import pdb; pdb.set_trace()
+
+
+
+        # self.mb.tag_set_data(self.corretion2_tag, elems, np.asarray(x))
 
     def calculate_local_problem_het_2(self, elems, lesser_dim_meshsets, support_vals_tag, h2):
         std_map = Epetra.Map(len(elems), 0, self.comm)
@@ -1262,10 +1365,10 @@ class MsClassic_mono:
 
     def corretion_func(self):
         #0
+
         zeros = np.zeros(len(self.all_fine_vols))
         std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
         i = 0
-        # my_pairs = set()
         for collocation_point_set in self.sets:
             #1
             i += 1
@@ -1303,9 +1406,44 @@ class MsClassic_mono:
                 else:
                     pass
 
+    def corretion_func_gr(self):
+        #0
+
+        zeros = np.zeros(len(self.all_fine_vols))
+        self.mb.tag_set_data(self.corretion2_tag, self.all_fine_vols, zeros)
+        std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
+        i = 0
+        my_vols = set()
+        for collocation_point_set in self.sets:
+            #1
+            i += 1
+            childs = self.mb.get_child_meshsets(collocation_point_set)
+            collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
+            primal_elem = self.mb.tag_get_data(self.fine_to_primal_tag, collocation_point,
+                                           flat=True)[0]
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
+            # corretion_tag usa o mapeamento do primal_id
+            primal_id = self.ident_primal[primal_id]
+            for vol in childs:
+                #2
+                elems_vol = self.mb.get_entities_by_handle(vol)
+                if elems_vol in my_vols:
+                    continue
+                my_vols.add(elems_vol)
+                gids = self.mb.tag_get_data(self.global_id_tag, elems_vol, flat=True)
+                c_faces = self.mb.get_child_meshsets(vol)
+                self.calculate_local_problem_het_corretion_gr(
+                elems_vol, c_faces, collocation_point)
+                # boundary = set(elems_vol) & set(self.elems_wells_d)
+                # gids_bound = self.mb.tag_get_data(self.global_id_tag, boundary, flat=True)
+
     def create_tags(self, mb):
         self.gravidade_tag = mb.tag_get_handle(
                         "GRAVIDADE", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
+        self.corretion2_tag = mb.tag_get_handle(
+                        "CORRETION2", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
 
         self.Pc2_tag = mb.tag_get_handle(
@@ -1406,7 +1544,7 @@ class MsClassic_mono:
     def erro_2(self):
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
-            Pms = self.mb.tag_get_data(self.pms2_tag, volume, flat = True)[0]
+            Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
             erro = abs(Pf - Pms)#/float(abs(Pf))
             self.mb.tag_set_data(self.err2_tag, volume, erro)
 
@@ -1496,6 +1634,7 @@ class MsClassic_mono:
             else:
                 wells_n.append(global_id)
                 set_q.append(valor_da_prescricao)
+
 
 
 
@@ -2079,12 +2218,6 @@ class MsClassic_mono:
         self.A = A
         self.V = V
 
-    def read_structured_2(self):
-        elem = self.all_fine_vols[0]
-        print(elem)
-
-        pass
-
     def set_global_problem(self):
         """
         Obtem a matriz de transmissibilidade por diferencas finitas
@@ -2651,7 +2784,7 @@ class MsClassic_mono:
                         0.0, 0.5, 0.0,
                         0.0, 0.0, 0.5]
 
-        gid_lim = 404
+        gid_lim = 403
 
         for volume in self.all_fine_vols:
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
@@ -2659,6 +2792,27 @@ class MsClassic_mono:
                 self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
             else:
                 self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+
+        # gid1 = np.array([0, 0, 0])
+        # gid2 = np.array([5, 8, 8])
+        # dif = (gid2 - gid1) + np.array([1, 1, 1])
+        # gids = []
+        #
+        # for i in range(dif[0]):
+        #     for j in range(dif[1]):
+        #         for k in range(dif[2]):
+        #             gid = gid1 + np.array([i, j, k])
+        #             gids.append(gid)
+        #
+        # for volume in self.all_fine_vols:
+        #     global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+        #     if global_volume in gids:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
+        #     else:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+
+
+
 
     def solve_linear_problem(self, A, b, n):
 
@@ -2806,24 +2960,33 @@ class MsClassic_mono:
                     arq.write('\n')
 
     def obter_grafico(self):
+        # direcao z
         l = []
         for i in range(self.nz):
             gid = self.nx*self.ny*i
             l.append(gid)
         pos = []
         p = []
+        p2 = []
         for volume in self.all_fine_vols:
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
             if global_volume in l:
                 volume_centroid = self.mesh_topo_util.get_average_position([volume])
                 value = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
+                value2 = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
                 p.append(value)
+                p2.append(value2)
                 pos.append(volume_centroid[2])
 
         with open('grafico.txt', 'w') as arq:
             for i in range(len(p)):
                 arq.write('{0},{1}'.format(pos[i], p[i]))
                 arq.write('\n')
+            arq.write('\n')
+            for i in range(len(p2)):
+                arq.write('{0},{1}'.format(pos[i], p2[i]))
+                arq.write('\n')
+
 
     def teste_centroid(self):
         l1 = list(range(self.nx))
@@ -2903,7 +3066,6 @@ class MsClassic_mono:
         self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
         self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
         self.organize_Pms()
-        import pdb; pdb.set_trace()
         #self.teste_numpy()
         #self.add_gr_2()
         #print(self.vect_gr)
@@ -2911,12 +3073,13 @@ class MsClassic_mono:
         #self.Neuman_problem_4()
         #self.Neuman_problem_4_gr()
         #self.erro()
-        #self.erro_2()
+        self.erro_2()
 
-        self.erro_3()
-        self.corretion_func()
+        # self.erro_3()
+        # self.corretion_func()
+        # self.corretion_func_gr()
         #self.add_gr()
-        #self.obter_grafico()
+        self.obter_grafico()
         #self.teste_centroid()
 
 

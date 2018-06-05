@@ -7,9 +7,7 @@ import time
 import sys
 
 class Msclassic_bif:
-    """
-    As funcoes estao organizadas por ordem allfabetica
-    """
+
     def __init__(self):
         self.comm = Epetra.PyComm()
         self.mb = core.Core()
@@ -44,12 +42,14 @@ class Msclassic_bif:
         self.Sor = 0.2 # saturacao residual de oleo
         self.nw = 2 # expoente da agua para calculo da permeabilidade relativa
         self.no = 2 # expoente do oleo para calculo da permeabilidade relativa
-        self.set_k()
-        self.set_fi()
-        self.get_wells()
-        self.read_perm_rel()
+        self.set_k() # seta a permeabilidade em cada volume
+        self.set_fi() # seta a porosidade em cada volume
+        self.get_wells() # obtem os gids dos volumes que sao pocos
+        self.read_perm_rel() # le o arquivo txt perm_rel.txt
+        gids = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols , flat = True)
+        self.map_gids_in_all_fine_vols = dict(zip(gids, self.all_fine_vols)) # mapeamento dos gids nos elementos
 
-        self.neigh_wells_d = [] #volumes da malha fina vizinhos as pocos de pressao prescrita
+        self.neigh_wells_d = [] #volumes da malha fina vizinhos aos pocos de pressao prescrita
         self.elems_wells_d = [] #elementos com pressao prescrita
         for volume in self.wells:
 
@@ -66,11 +66,11 @@ class Msclassic_bif:
                         self.neigh_wells_d.append(adj)
 
         self.all_fine_vols_ic = set(self.all_fine_vols) - set(self.elems_wells_d)
-        # self.all_volumes_ic =  volumes da malha fina que sao icognitas
+        # self.all_volumes_ic =  volumes da malha fina que sao incognitas
         gids_vols_ic = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols_ic, flat=True)
-        self.map_vols_ic = dict(zip(gids_vols_ic, range(len(gids_vols_ic))))
-        self.map_vols_ic_2 = dict(zip(range(len(gids_vols_ic)), gids_vols_ic))
-        self.nf_ic = len(self.all_fine_vols_ic)
+        self.map_vols_ic = dict(zip(gids_vols_ic, range(len(gids_vols_ic)))) # mapeamento dos elementos que sao incognitas
+        self.map_vols_ic_2 = dict(zip(range(len(gids_vols_ic)), gids_vols_ic)) # mapeamento contrario
+        self.nf_ic = len(self.all_fine_vols_ic) # numero de icognitas
 
     def calculate_local_problem_het(self, elems, lesser_dim_meshsets, support_vals_tag):
         std_map = Epetra.Map(len(elems), 0, self.comm)
@@ -302,6 +302,9 @@ class Msclassic_bif:
             fi = 0.3 #self.mb.tag_get_data(self.fi_tag, volume)[0][0]
             sat1 = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
             sat = sat1 + div*(self.delta_t/(fi*self.V))
+            if sat > 1.0:
+                print('saturacao maior que 1 na funcao calculate_sat')
+                import pdb; pdb.set_trace()
             #if abs(div) < lim or sat1 == (1 - self.Sor) or sat < sat1:
             #if abs(div) < lim or sat1 == (1 - self.Sor):
             if abs(div) < lim or sat1 == 0.8:
@@ -338,19 +341,36 @@ class Msclassic_bif:
         """
         cfl usando fluxo maximo
         """
-        cfl = 1.0
+        cfl = 0.9
 
         self.delta_t = cfl*(fi*self.V)/float(qmax)
 
-    def cfl_2(self, vmax, h):
+    def cfl_2(self, vmax, h, dfds):
         """
         cfl usando velocidade maxima
         """
         cfl = 1.0
 
-        self.delta_t = (cfl*h)/float(vmax + 1)
+        self.delta_t = (cfl*h)/float(vmax*dfds)
 
     def create_tags(self, mb):
+        self.prod_tag = mb.tag_get_handle(
+                        "PROD", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
+
+        self.lbt_tag = mb.tag_get_handle(
+                        "LBT", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
+        self.fw_tag = mb.tag_get_handle(
+                        "FW", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
+        self.vel_tag = mb.tag_get_handle(
+                        "VEL", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
         self.Pc2_tag = mb.tag_get_handle(
                         "PC2", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
@@ -631,10 +651,10 @@ class Msclassic_bif:
 
     def div_max_3(self, p_tag):
         """
-        Verifica qual é o fluxo maximo que sai do volume de controle multiplicado pelo dfds
+        Verifica qual é o fluxo maximo de agua que sai do volume de controle multiplicado pelo dfds
         dfds = variacao do fluxo fracionario com a saturacao
         """
-        lim = 0.00001
+        lim = 10**(-12)
         q2 = 0.0
         fi = 0.0
         fi2 = 0.0
@@ -722,8 +742,8 @@ class Msclassic_bif:
     def div_upwind_2(self, volume, p_tag):
 
         """
+        calcula o fluxo total que entra no volume para calcular a saturacao
         a mobilidade da interface é dada pelo volume com a pressao maior
-
         """
 
         q = 0.0
@@ -762,11 +782,13 @@ class Msclassic_bif:
     def div_upwind_3(self, volume, p_tag):
 
         """
+        calcula o fluxo total que entra no volume para calcular a saturacao
         a mobilidade da interface é dada pela media das mobilidades
-        calcula o divergente de agua do volume para calcular a saturacao
         """
-
+        qt = 0.0
+        qp = 0.0
         q = 0.0
+        qw = 0.0
         list_sat = []
         list_lbw = []
         list_gid = []
@@ -782,11 +804,14 @@ class Msclassic_bif:
         sat_volume = self.mb.tag_get_data(self.sat_tag, volume, flat=True)[0]
         kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
         lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+        lbt_vol = self.mb.tag_get_data(self.lbt_tag, volume)[0][0]
+        fw_vol = self.mb.tag_get_data(self.fw_tag, volume)[0][0]
 
         for adj in adjs_vol:
             global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
             sat_adj = self.mb.tag_get_data(self.sat_tag, adj, flat=True)[0]
             padj = self.mb.tag_get_data(p_tag, adj)[0][0]
+            lbt_adj = self.mb.tag_get_data(self.lbt_tag, adj)[0][0]
             adj_centroid = self.mesh_topo_util.get_average_position([adj])
             direction = adj_centroid - volume_centroid
             uni = self.unitary(direction)
@@ -801,16 +826,35 @@ class Msclassic_bif:
             #     grad_p = (pvol - padj)/float(np.dot(self.h, uni))
             grad_p = (padj - pvol)/float(np.dot(self.h, uni))
             lamb_eq = (lamb_w_vol + lamb_w_adj)/2.0
-            keq = keq*lamb_eq*(np.dot(self.A, uni))
-            q = q + keq*(grad_p)
+            keq = keq*lamb_eq
+            q = q + keq*(grad_p)*(np.dot(self.A, uni))
+
+            # producao de oleo
+            if global_volume in self.wells_prod:
+                kvol2 = kvol*(lbt_vol)
+                kadj2 = kadj*(lbt_adj)
+                keq2 = self.kequiv(kvol2, kadj2)
+                qt += grad_p*(keq2)*(np.dot(self.A, uni)) #fluxo total que entra no volume
+
+
+
+
             list_sat.append(sat_adj)
             list_lbw.append(lamb_w_adj)
             list_gid.append(global_adj)
             list_grad.append(grad_p)
-            list_q.append(keq*(grad_p))
+            list_q.append(keq*(grad_p)*(np.dot(self.A, uni)))
             list_p.append(padj)
             list_lbeq.append(lamb_eq)
             kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+
+        if global_volume in self.wells_prod:
+            qp += (1 - fw_vol)*qt # fluxo de oleo que sai do volume
+            qw += (fw_vol)*qt #fluxo de agua que sai do volume
+            q = q - qw
+            self.mb.tag_set_data(self.prod_tag, volume, qp)
+
+
         list_sat.append(sat_volume)
         list_lbw.append(lamb_w_vol)
         list_gid.append(global_volume)
@@ -818,9 +862,8 @@ class Msclassic_bif:
         list_p.append(pvol)
 
         if q < 0:
+            print('divergente upwind de agua menor que zero na funcao div_upwind_3')
             import pdb; pdb.set_trace()
-
-
 
         return q
 
@@ -845,9 +888,9 @@ class Msclassic_bif:
         (primal_id)
 
         se flag == 1 alem dos volumes na interface dos primais adjacentes (volumes_in_interface)
-        retorna tambem os volumes no primal que estao na interface (volumes_in_primal)
+        retorna tambem os volumes no primal corrente que estao na sua interface (volumes_in_primal)
 
-        se flag == 2 retorna apenas os volumes do primal corrente que estao na interface (volumes_in_primal)
+        se flag == 2 retorna apenas os volumes do primal corrente que estao na sua interface (volumes_in_primal)
 
         """
         #0
@@ -1377,18 +1420,26 @@ class Msclassic_bif:
                 pol = 0.0
             else:
                 pass
+        else:
+            pass
 
         return abs(pol)
 
     def pol_interp_2(self, S):
-
-        #import pdb; pdb.set_trace()
 
         # S_temp = (S - self.Swc)/(1 - self.Swc - self.Sor)
         # krw = (S_temp)**(self.nw)
         # kro = (1 - S_temp)**(self.no)
         krw = ((S - self.Swc)/float(1 - self.Swc - self.Sor))**(self.nw)
         kro = ((1 - S - self.Swc)/float(1 - self.Swc - self.Sor))**(self.no)
+        if S > (1 - self.Sor):
+            krw = 1.0
+            kro = 0.0
+        elif S < self.Swc:
+            krw = 0.0
+            kro = 1.0
+        else:
+            pass
 
         return krw, kro
 
@@ -1476,6 +1527,9 @@ class Msclassic_bif:
         self.V = V # volume de um volume da malha fina
         self.A = a # vetor com as areas
         self.tz = tz # tamanho total na direcao z
+        self.viz_x = [1, -1]
+        self.viz_y = [nx, -nx]
+        self.viz_z = [nx*ny, -nx*ny]
 
     def set_erro(self):
         """
@@ -1857,8 +1911,12 @@ class Msclassic_bif:
             krw, kro = self.pol_interp_2(S)
             lamb_w = krw/self.mi_w
             lamb_o = kro/self.mi_o
+            lbt = lamb_w + lamb_o
+            fw = lamb_w/float(lbt)
             self.mb.tag_set_data(self.lamb_w_tag, volume, lamb_w)
             self.mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
+            self.mb.tag_set_data(self.fw_tag, volume, fw)
+            self.mb.tag_set_data(self.lbt_tag, volume, lbt)
 
     def set_Pc(self):
         """
@@ -1896,6 +1954,57 @@ class Msclassic_bif:
                 self.mb.tag_set_data(self.sat_tag, volume, 0.8)
             else:
                 self.mb.tag_set_data(self.sat_tag, volume, 0.2)
+
+    def set_vel(self, p_tag):
+
+        for volume in self.all_fine_vols_ic:
+            v1 = np.zeros(3)
+            # v2 = np.zeros(3)
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            front = np.array([global_volume + self.viz_x[0], global_volume + self.viz_y[0], global_volume + self.viz_z[0]])
+            back = np.array([global_volume - self.viz_x[0], global_volume - self.viz_y[0], global_volume - self.viz_z[0]])
+            viz_x = np.array([global_volume + self.viz_x[0], global_volume - self.viz_x[0]])
+            viz_y = np.array([global_volume + self.viz_y[0], global_volume - self.viz_y[0]])
+            viz_z = np.array([global_volume + self.viz_z[0], global_volume - self.viz_z[0]])
+            lbt_vol = self.mb.tag_get_data(self.lbt_tag, volume)[0][0]
+            pvol = self.mb.tag_get_data(self.p_tag, volume)[0][0]
+            for adj in adj_volumes:
+                global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                padj = self.mb.tag_get_data(self.p_tag, adj)[0][0]
+                lbt_adj = self.mb.tag_get_data(self.lbt_tag, adj)[0][0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                uni = self.unitary(direction)
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kvol = kvol*(lbt_vol)
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                kadj = kadj*(lbt_adj)
+                keq = self.kequiv(kvol, kadj)
+                # keq = keq*(np.dot(self.A, uni)/(np.dot(self.h, uni)))
+                grad_p = (padj - pvol)/float(np.dot(self.h, uni))
+                vel = -(grad_p)*keq
+                # if global_adj in front:
+                if global_adj > global_volume:
+                    if global_adj in viz_x:
+                        v1[0] = vel
+                    elif global_adj in viz_y:
+                        v1[1] = vel
+                    else:
+                        v1[2] = vel
+                else:
+                    # if global_adj in viz_x:
+                    #     v2[0] = vel
+                    # elif global_adj in viz_y:
+                    #     v2[1] = vel
+                    # else:
+                    #     v2[2] = vel
+                    pass
+            #1
+            self.mb.tag_set_data(self.vel_tag, volume, v1)
 
     def solve_linear_problem(self, A, b, n):
         """
@@ -1941,7 +2050,7 @@ class Msclassic_bif:
         """
         Calcula a velocidade maxima tambem a variacao do fluxo fracionario com a saturacao
         """
-        lim = 0.00001
+        lim = 10**(-10)
         v2 = 0.0
         h2 = 0
         dfds2 = 0
@@ -1974,14 +2083,19 @@ class Msclassic_bif:
                 if abs(sat_adj - sat_vol) < lim:
                     continue
                 dfds = ((lamb_w_adj/(lamb_w_adj+lamb_o_adj)) - (lamb_w_vol/(lamb_w_vol+lamb_o_vol)))/float((sat_adj - sat_vol))
-                v = abs(dfds*keq*(padj - pvol))
+                v = abs(keq*(padj - pvol)/float(h))
                 if v > v2:
                     v2 = v
                     h2 = h
+                if abs(dfds) > dfds2:
                     dfds2 = abs(dfds)
                 kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
 
-        return v2, h2
+        if v2 < lim:
+            print('velocidade maxima de agua menor que lim')
+            import pdb; pdb.set_trace()
+
+        return v2, h2, dfds2
 
     def run(self):
         print('loop')
@@ -2078,8 +2192,8 @@ class Msclassic_bif:
         #print(qmax)
         #print('delta_t')
         #print(self.delta_t)
-        vmax, h = self.vel_max(self.pf_tag)
-        self.cfl_2(vmax, h)
+        vmax, h, dfds = self.vel_max(self.pf_tag)
+        self.cfl_2(vmax, h, dfds)
         print('delta_t: {0}'.format(self.delta_t))
         print('loop: {0}'.format(self.loop))
         print('\n')
