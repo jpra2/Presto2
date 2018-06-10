@@ -84,9 +84,29 @@ class StructuredMultiscaleMesh:
                                    self.mesh_size[0]+1, dtype='float64') *
                                self.block_size[0]/max_mesh_size)
                            ], dtype='float64')
+        # coords = np.array([(i, j, k)
+        #                    for k in (
+        #                        np.arange(
+        #                            self.mesh_size[2]+1, dtype='float64') *
+        #                        self.block_size[2]/self.mesh_size[2])
+        #                    for j in (
+        #                        np.arange(
+        #                            self.mesh_size[1]+1, dtype='float64') *
+        #                        self.block_size[1]/self.mesh_size[1])
+        #                    for i in (
+        #                        np.arange(
+        #                            self.mesh_size[0]+1, dtype='float64') *
+        #                        self.block_size[0]/self.mesh_size[0])
+        #                    ], dtype='float64')
+
+
+
         self.verts = self.mb.create_vertices(coords.flatten())
 
     def create_tags(self):
+        self.centroid_tag = self.mb.tag_get_handle(
+            "CENTROID", 3, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
         self.gid_tag = self.mb.tag_get_handle(
             "GLOBAL_ID", 1, types.MB_TYPE_INTEGER, types.MB_TAG_DENSE, True)
 
@@ -520,6 +540,24 @@ class StructuredMultiscaleMesh:
                 self.collocation_point_tag,
                 collocation_point_root_ms,
                 collocation_point)
+
+    def create_centroids(self):
+        """
+        so serve para malhas estruturadas formadas por hexaedros
+        """
+        h = np.array([self.block_size[0]/self.mesh_size[0],
+                      self.block_size[1]/self.mesh_size[1],
+                      self.block_size[2]/self.mesh_size[2]])
+        hm = h*(1/2.0)
+
+        for idz in range(self.mesh_size[2]):
+            for idy in range(self.mesh_size[1]):
+                for idx in range(self.mesh_size[0]):
+                    elem = self._get_elem_by_ijk((idx, idy, idz))
+                    gid = self.mb.tag_get_data(self.gid_tag, elem, flat=True)[0]
+                    centroid = hm + np.array([idx*h[0], idy*h[1], idz*h[2]])
+
+                    self.mb.tag_set_data(self.centroid_tag, elem, centroid)
 
     def create_wells(self):
         wells = self.wells

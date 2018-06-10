@@ -88,9 +88,12 @@ class Preprocessor(object):
         self.smm.store_primal_adj()
         print("took {0}\n".format(time.time()-t0))
 
+        self.smm.create_centroids()
+
         #self.smm.create_wells()
         #self.smm.create_wells_2()
         self.smm.create_wells_3()
+        print('finalizou')
 
     @property
     def structured_configs(self):
