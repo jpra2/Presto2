@@ -1,4 +1,7 @@
-permeabilidade aleatoria na direcao z
-gradiente de pressao em z
-p= 1 na camada 0
-p = 0 na ultima camada
+permeabilidade homogenea = 1
+gradiente de pressao em xy
+sem gravidade
+bifasico
+
+p = 1  em x,y = 0
+p = 0 em x,y = 24

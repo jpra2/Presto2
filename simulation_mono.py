@@ -4,7 +4,8 @@ import time
 
 t1 = time.time()
 sim_mono = MsClassic_mono(ind = True)
-sim_mono.run_2()
+sim_mono.simulacoes()
+
 
 t2 = time.time()
 print('\n')

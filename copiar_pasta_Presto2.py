@@ -12,16 +12,13 @@ with open('enumeracao.py', 'r') as arq:
     text = arq.readlines()
     n = int(text[-1])
 
-n += 1
-
 
 with open('enumeracao.py', 'w') as arq:
-    arq.write('{0}\n'.format(n))
+    arq.write('{0}\n'.format(n+1))
 
 pasta = 'pasta{0}'.format(n)
 
 
 origem = principal
 destino = os.path.join(caminho, pasta)
-os.makedirs(destino)
-shutil.copy(origem, destino)
+shutil.copytree(origem, destino)

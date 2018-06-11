@@ -19,11 +19,12 @@ class StructuredMultiscaleMesh:
         List or array containing three values indicating the constant
         increments of vertex coordinates in x, y and z.
     """
-    def __init__(self, coarse_ratio, mesh_size, block_size, wells):
+    def __init__(self, coarse_ratio, mesh_size, block_size, wells, prop):
         self.coarse_ratio = coarse_ratio
         self.mesh_size = mesh_size
         self.block_size = block_size
         self.wells = wells
+        self.prop = prop
 
         self.verts = None  # Array containing MOAB vertex entities
         self.elems = []  # List containing MOAB volume entities
@@ -104,6 +105,63 @@ class StructuredMultiscaleMesh:
         self.verts = self.mb.create_vertices(coords.flatten())
 
     def create_tags(self):
+        if self.prop['flag_sim'] == 0:
+
+            self.gama_tag = self.mb.tag_get_handle(
+                "GAMA", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.rho_tag = self.mb.tag_get_handle(
+                "RHO", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.mi_tag = self.mb.tag_get_handle(
+                "MI", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+        else:
+            self.miw_tag = self.mb.tag_get_handle(
+                "MIW", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.mio_tag = self.mb.tag_get_handle(
+                "MIO", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.rhow_tag = self.mb.tag_get_handle(
+                "RHOW", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.rhoo_tag = self.mb.tag_get_handle(
+                "RHOO", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.gamaw_tag = self.mb.tag_get_handle(
+                "GAMAW", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.gamao_tag = self.mb.tag_get_handle(
+                "GAMAO", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.nw_tag = self.mb.tag_get_handle(
+                "NW", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
+
+            self.no_tag = self.mb.tag_get_handle(
+                "NO", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
+
+            self.Sor_tag = self.mb.tag_get_handle(
+                "SOR", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.Swc_tag = self.mb.tag_get_handle(
+                "SWC", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.Swi_tag = self.mb.tag_get_handle(
+                "SWI", 1, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
+
+            self.t_tag = self.mb.tag_get_handle(
+                "T", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
+
+            self.loops_tag = self.mb.tag_get_handle(
+                "LOOPS", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
+
+
+        self.grav_tag = self.mb.tag_get_handle(
+            "GRAV", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
+
+        self.flagsim_tag = self.mb.tag_get_handle(
+            "FLAGSIM", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
+
         self.centroid_tag = self.mb.tag_get_handle(
             "CENTROID", 3, types.MB_TYPE_DOUBLE, types.MB_TAG_SPARSE, True)
 
@@ -806,3 +864,29 @@ class StructuredMultiscaleMesh:
             self.wells_tag,
             0,
             wells_set)
+
+    def propriedades(self):
+
+        elem = self._get_elem_by_ijk((0, 0, 0))
+        self.mb.tag_set_data(self.grav_tag, elem, self.prop['gravidade'])
+        self.mb.tag_set_data(self.flagsim_tag, elem, self.prop['flag_sim'])
+
+        if self.prop['flag_sim'] == 0:
+            self.mb.tag_set_data(self.mi_tag, elem, self.prop['mi'])
+            self.mb.tag_set_data(self.gama_tag, elem, self.prop['gama'])
+            self.mb.tag_set_data(self.rho_tag, elem, self.prop['rho'])
+        else:
+            self.mb.tag_set_data(self.miw_tag, elem, self.prop['mi_w'])
+            self.mb.tag_set_data(self.mio_tag, elem, self.prop['mi_o'])
+            self.mb.tag_set_data(self.mio_tag, elem, self.prop['mi_o'])
+            self.mb.tag_set_data(self.rhow_tag, elem, self.prop['rho_w'])
+            self.mb.tag_set_data(self.rhoo_tag, elem, self.prop['rho_o'])
+            self.mb.tag_set_data(self.gamaw_tag, elem, self.prop['gama_w'])
+            self.mb.tag_set_data(self.gamao_tag, elem, self.prop['gama_o'])
+            self.mb.tag_set_data(self.nw_tag, elem, self.prop['nw'])
+            self.mb.tag_set_data(self.no_tag, elem, self.prop['no'])
+            self.mb.tag_set_data(self.Sor_tag, elem, self.prop['Sor'])
+            self.mb.tag_set_data(self.Swc_tag, elem, self.prop['Swc'])
+            self.mb.tag_set_data(self.Swi_tag, elem, self.prop['Swi'])
+            self.mb.tag_set_data(self.t_tag, elem, self.prop['t'])
+            self.mb.tag_set_data(self.loops_tag, elem, self.prop['loops'])

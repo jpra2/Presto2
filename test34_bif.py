@@ -28,7 +28,7 @@ class Msclassic_bif:
             self.ident_primal.append(primal_id)
         self.ident_primal = dict(zip(self.ident_primal, range(len(self.ident_primal))))
         #self.ident_primal = remapeamento dos ids globais
-        self.loops = 10 # loops totais
+        self.loops = 200 # loops totais
         self.t = 1000 # tempo total de simulacao
         self.mi_w = 1.0 # viscosidade da agua
         self.mi_o = 1.3 # viscosidade do oleo
@@ -836,9 +836,6 @@ class Msclassic_bif:
                 keq2 = self.kequiv(kvol2, kadj2)
                 qt += grad_p*(keq2)*(np.dot(self.A, uni)) #fluxo total que entra no volume
 
-
-
-
             list_sat.append(sat_adj)
             list_lbw.append(lamb_w_adj)
             list_gid.append(global_adj)
@@ -860,6 +857,7 @@ class Msclassic_bif:
         list_gid.append(global_volume)
         list_q.append(q)
         list_p.append(pvol)
+
 
         if q < 0:
             print('divergente upwind de agua menor que zero na funcao div_upwind_3')
@@ -2201,6 +2199,8 @@ class Msclassic_bif:
         self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
         self.loop = 1
         t_ = t_ + self.delta_t
+        print(t_)
+        print('t')
 
         while t_ <= self.t and self.loop < self.loops:
             #1

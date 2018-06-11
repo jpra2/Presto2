@@ -63,8 +63,56 @@ class Preprocessor(object):
 
         self.wells = d[:]
 
+        self.sim = self.configs['tipo-de-simulacao']
+        self.sim = int(self.sim['flag'])
+
+        self.propriedades_mono = self.configs['propriedades-mono']
+        self.mi = float(self.propriedades_mono['mi'])
+        self.gama = float(self.propriedades_mono['gama'])
+        self.rho = float(self.propriedades_mono['rho'])
+        self.gravidade = int(self.propriedades_mono['gravidade'])
+
+        prop = [self.sim, self.mi, self.gama, self.rho, self.gravidade]
+
+        names = ['flag_sim', 'mi', 'gama', 'rho', 'gravidade']
+
+        self.prop_mono = dict(zip(names, prop))
+
+        self.propriedades_bif = self.configs['propriedades-bif']
+        self.mi_w = float(self.propriedades_bif['mi_w'])
+        self.mi_o = float(self.propriedades_bif['mi_o'])
+        self.rho_w = float(self.propriedades_bif['rho_w'])
+        self.rho_o = float(self.propriedades_bif['rho_o'])
+        self.gama_w = float(self.propriedades_bif['gama_w'])
+        self.gama_o = float(self.propriedades_bif['gama_o'])
+        self.nw = int(self.propriedades_bif['nw'])
+        self.no = int(self.propriedades_bif['no'])
+        self.gravidade = int(self.propriedades_bif['gravidade'])
+        self.Sor = float(self.propriedades_bif['Sor'])
+        self.Swc = float(self.propriedades_bif['Swc'])
+        self.Swi = float(self.propriedades_bif['Swi'])
+        self.t = int(self.propriedades_bif['t'])
+        self.loops = int(self.propriedades_bif['loops'])
+
+        prop = [self.sim, self.mi_w, self.mi_o, self.rho_w, self.rho_o, self.gama_w,
+                 self.gama_o, self.nw, self.no, self.gravidade, self.Sor, self.Swc, self.Swi,
+                    self.t, self.loops]
+
+        names = ['flag_sim', 'mi_w', 'mi_o', 'rho_w', 'rho_o', 'gama_w', 'gama_o',
+                     'nw', 'no', 'gravidade', 'Sor', 'Swc', 'Swi', 't', 'loops']
+
+        self.prop_bif = dict(zip(names, prop))
+
+        if self.sim == 0:
+            self.prop = self.prop_mono
+        elif self.sim == 1:
+            self.prop = self.prop_bif
+        else:
+            print('flag do tipo de simulacao errada')
+
+
         self.smm = StructuredMultiscaleMesh(
-            self.coarse_ratio, self.mesh_size, self.block_size, self.wells)
+            self.coarse_ratio, self.mesh_size, self.block_size, self.wells, self.prop)
 
     def run(self, moab):
         self.smm.set_moab(moab)
@@ -90,9 +138,13 @@ class Preprocessor(object):
 
         self.smm.create_centroids()
 
+
         #self.smm.create_wells()
         #self.smm.create_wells_2()
         self.smm.create_wells_3()
+
+        self.smm.propriedades()
+
         print('finalizou')
 
     @property
