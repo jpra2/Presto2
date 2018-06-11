@@ -1362,10 +1362,8 @@ class MsClassic_mono:
             primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
             # corretion_tag usa o mapeamento do primal_id
             primal_id = self.ident_primal[primal_id]
-            corretion_tag = self.mb.tag_get_handle(
-                "CORRETION{0}".format(primal_id), 1, types.MB_TYPE_DOUBLE, True,
-                types.MB_TAG_SPARSE, default_value=0.0)
-            self.mb.tag_set_data(corretion_tag, self.all_fine_vols, zeros)
+
+            # self.mb.tag_set_data(corretion_tag, self.all_fine_vols, zeros)
             for vol in childs:
                 #2
                 elems_vol = self.mb.get_entities_by_handle(vol)
@@ -1439,6 +1437,10 @@ class MsClassic_mono:
         self.map_elems_in_centroids = dict(zip(self.all_fine_vols, centroids))
 
     def create_tags(self, mb):
+
+        self.corretion_tag = self.mb.tag_get_handle(
+            "CORRETION", 1, types.MB_TYPE_DOUBLE, True,
+            types.MB_TAG_SPARSE, default_value=0.0)
 
         self.corretion2_tag = mb.tag_get_handle(
                         "CORRETION2", 1, types.MB_TYPE_DOUBLE,
@@ -3415,8 +3417,9 @@ class MsClassic_mono:
     def simulacoes(self):
         caminho3 = '/home/joao/simulacoes/999'
         caminho5 = '/home/joao/simulacoes/252525'
-        principal = '/home/joao/git/local/Presto2/'
-        cm2 = '/elliptic/simulacoes'
+        principal1 = '/home/joao/git/local/Presto2/'
+        principal = '/elliptic'
+        caminho1 = '/elliptic/simulacoes'
         number_sim = 30
         caminho = caminho3
         print(os.getcwd())

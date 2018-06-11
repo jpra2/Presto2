@@ -71,34 +71,34 @@ class StructuredMultiscaleMesh:
             self.mesh_size[1]*self.block_size[1],
             self.mesh_size[0]*self.block_size[0])
 
-        coords = np.array([(i, j, k)
-                           for k in (
-                               np.arange(
-                                   self.mesh_size[2]+1, dtype='float64') *
-                               self.block_size[2]/max_mesh_size)
-                           for j in (
-                               np.arange(
-                                   self.mesh_size[1]+1, dtype='float64') *
-                               self.block_size[1]/max_mesh_size)
-                           for i in (
-                               np.arange(
-                                   self.mesh_size[0]+1, dtype='float64') *
-                               self.block_size[0]/max_mesh_size)
-                           ], dtype='float64')
         # coords = np.array([(i, j, k)
         #                    for k in (
         #                        np.arange(
         #                            self.mesh_size[2]+1, dtype='float64') *
-        #                        self.block_size[2]/self.mesh_size[2])
+        #                        self.block_size[2]/max_mesh_size)
         #                    for j in (
         #                        np.arange(
         #                            self.mesh_size[1]+1, dtype='float64') *
-        #                        self.block_size[1]/self.mesh_size[1])
+        #                        self.block_size[1]/max_mesh_size)
         #                    for i in (
         #                        np.arange(
         #                            self.mesh_size[0]+1, dtype='float64') *
-        #                        self.block_size[0]/self.mesh_size[0])
+        #                        self.block_size[0]/max_mesh_size)
         #                    ], dtype='float64')
+        coords = np.array([(i, j, k)
+                           for k in (
+                               np.arange(
+                                   self.mesh_size[2]+1, dtype='float64') *
+                               self.block_size[2]/self.mesh_size[2]*10)
+                           for j in (
+                               np.arange(
+                                   self.mesh_size[1]+1, dtype='float64') *
+                               self.block_size[1]/self.mesh_size[1]*10)
+                           for i in (
+                               np.arange(
+                                   self.mesh_size[0]+1, dtype='float64') *
+                               self.block_size[0]/self.mesh_size[0]*10)
+                           ], dtype='float64')
 
 
 

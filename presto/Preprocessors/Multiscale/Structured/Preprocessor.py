@@ -115,6 +115,7 @@ class Preprocessor(object):
             self.coarse_ratio, self.mesh_size, self.block_size, self.wells, self.prop)
 
     def run(self, moab):
+        t1 = time.time()
         self.smm.set_moab(moab)
 
         self.smm.calculate_primal_ids()
@@ -132,6 +133,7 @@ class Preprocessor(object):
 
         print("Generating dual...")
         t0 = time.time()
+        t1 = t0
         self.smm.generate_dual()
         self.smm.store_primal_adj()
         print("took {0}\n".format(time.time()-t0))
@@ -146,6 +148,9 @@ class Preprocessor(object):
         self.smm.propriedades()
 
         print('finalizou')
+        t0 = time.time()
+        print('tempo total')
+        print(t0-t1)
 
     @property
     def structured_configs(self):
