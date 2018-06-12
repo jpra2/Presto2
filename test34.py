@@ -403,7 +403,7 @@ class MsClassic_mono:
              A_np[idx, idx] = 1.0
              b_np[idx] = self.mb.tag_get_data(self.corretion_tag, elem, flat=True)[0]
 
-        elems_ic = set(elems) - (boundary_dirichlet & boundary_collocation_points)
+        elems_ic = set(elems) - (boundary_dirichlet | boundary_collocation_points)
 
         for elem in elems_ic:
             k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
@@ -413,30 +413,37 @@ class MsClassic_mono:
             values = []
             ids = []
             for adj in adj_volumes:
-                if adj in elems:
-                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
-                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
-                    direction = centroid_adj - centroid_elem
-                    uni = self.unitary(direction)
-                    k_elem = np.dot(np.dot(k_elem,uni),uni)
-                    k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
-                    k_adj = np.dot(np.dot(k_adj,uni),uni)
-                    keq = self.kequiv(k_elem, k_adj)
-                    #keq = keq/(np.dot(h2, uni))
-                    keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
-                    values.append(-keq)
-                    ids.append(id_map[adj])
-                    k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
+                if adj not in elems:
+                    continue
+                k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                direction = centroid_adj - centroid_elem
+                uni = self.unitary(direction)
+                k_elem = np.dot(np.dot(k_elem,uni),uni)
+                k_adj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                k_adj = np.dot(np.dot(k_adj,uni),uni)
+                keq = self.kequiv(k_elem, k_adj)
+                #keq = keq/(np.dot(h2, uni))
+                keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                values.append(-keq)
+                ids.append(id_map[adj])
+                k_elem = self.mb.tag_get_data(self.perm_tag, elem).reshape([3, 3])
             #1
             values.append(-sum(values))
             idx = id_map[elem]
-            gid = self.mb.tag_get_data(self.global_id_tag, elem, flat=True)[0]
             ids.append(idx)
             A.InsertGlobalValues(idx, values, ids)
             A_np[idx, ids] = values[:]
+            if elem in boundary_neuman:
+                index = self.wells_n.index(elem)
+                if elem in self.wells_inj:
+                    b[id_map[elem]] += self.wells_n[index]
+                    b_np[id_map[elem]] += self.wells_n[index]
+                else:
+                    b[id_map[elem]] -= self.wells_n[index]
+                    b_np[id_map[elem]] -= self.wells_n[index]
 
         A.FillComplete()
-
 
         linearProblem = Epetra.LinearProblem(A, x, b)
         solver = AztecOO.AztecOO(linearProblem)
