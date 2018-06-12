@@ -599,24 +599,6 @@ class StructuredMultiscaleMesh:
                 collocation_point_root_ms,
                 collocation_point)
 
-    def create_centroids(self):
-        """
-        so serve para malhas estruturadas formadas por hexaedros
-        """
-        h = np.array([self.block_size[0]/self.mesh_size[0],
-                      self.block_size[1]/self.mesh_size[1],
-                      self.block_size[2]/self.mesh_size[2]])
-        hm = h*(1/2.0)
-
-        for idz in range(self.mesh_size[2]):
-            for idy in range(self.mesh_size[1]):
-                for idx in range(self.mesh_size[0]):
-                    elem = self._get_elem_by_ijk((idx, idy, idz))
-                    gid = self.mb.tag_get_data(self.gid_tag, elem, flat=True)[0]
-                    centroid = hm + np.array([idx*h[0], idy*h[1], idz*h[2]])
-
-                    self.mb.tag_set_data(self.centroid_tag, elem, centroid)
-
     def create_wells(self):
         wells = self.wells
         nx = self.mesh_size[0]
