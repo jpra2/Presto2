@@ -81,7 +81,7 @@ class MsClassic_mono:
             self.map_vols_ic_2 = dict(zip(range(len(self.all_fine_vols_ic)), list(self.all_fine_vols_ic)))
             self.nf_ic = len(self.all_fine_vols_ic)
 
-            # self.run_2()
+            self.run_2()
 
     def add_gr(self):
 
@@ -1788,7 +1788,8 @@ class MsClassic_mono:
         map_id = mapeamento dos elementos
         """
         #0
-        volume_centroid = self.mb.tag_get_data(self.centroid_tag, volume, flat=True)
+        # volume_centroid = self.mb.tag_get_data(self.centroid_tag, volume, flat=True)
+        volume_centroid = self.mesh_topo_util.get_average_position([volume])
         adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
         kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
         soma = 0.0
@@ -1796,7 +1797,8 @@ class MsClassic_mono:
         temp_k = []
         for adj in adj_volumes:
             #1
-            adj_centroid = self.mb.tag_get_data(self.centroid_tag, adj, flat=True)
+            # adj_centroid = self.mb.tag_get_data(self.centroid_tag, adj, flat=True)
+            adj_centroid = self.mesh_topo_util.get_average_position([adj])
             direction = adj_centroid - volume_centroid
             uni = self.unitary(direction)
             kvol = np.dot(np.dot(kvol,uni),uni)
@@ -1821,7 +1823,8 @@ class MsClassic_mono:
         verifica se a adjacencia esta nos elementos do mapeamento
         """
         #0
-        volume_centroid = self.mb.tag_get_data(self.centroid_tag, volume, flat=True)
+        # volume_centroid = self.mb.tag_get_data(self.centroid_tag, volume, flat=True)
+        volume_centroid = self.mesh_topo_util.get_average_position([volume])
         adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
         kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
         soma = 0.0
@@ -1831,7 +1834,8 @@ class MsClassic_mono:
             #1
             if adj in map_id.keys():
                 #2
-                adj_centroid = self.mb.tag_get_data(self.centroid_tag, adj, flat=True)
+                # adj_centroid = self.mb.tag_get_data(self.centroid_tag, adj, flat=True)
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
                 direction = adj_centroid - volume_centroid
                 uni = self.unitary(direction)
                 kvol = np.dot(np.dot(kvol,uni),uni)
@@ -1843,8 +1847,8 @@ class MsClassic_mono:
                 temp_k.append(-keq)
                 kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
             #1
-            temp_k.append(-sum(temp_k))
-            temp_ids.append(map_id[volume])
+        temp_k.append(-sum(temp_k))
+        temp_ids.append(map_id[volume])
         #0
         return temp_k, temp_ids
 
