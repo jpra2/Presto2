@@ -2418,7 +2418,7 @@ class MsClassic_mono:
             for volume in all_volumes:
                 #2
                 self.mb.tag_set_data(self.pms2_tag, volume, x[map_volumes[volume]])
-                self.mb.tag_set_data(self.pms3_tag, volume, x_np[map_volumes[volume]])
+                # self.mb.tag_set_data(self.pms3_tag, volume, x_np[map_volumes[volume]])
 
     def organize_op(self):
         #0
@@ -3215,33 +3215,33 @@ class MsClassic_mono:
 
         """
 
-        # perm_tensor = [1.0, 0.0, 0.0,
-        #                 0.0, 1.0, 0.0,
-        #                 0.0, 0.0, 1.0]
-        #
-        # for elem in self.all_fine_vols:
-        #     self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
+        perm_tensor = [1.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                        0.0, 0.0, 1.0]
 
-        # permeabilidades em camadas z
-        cont = 0
-        elems = []
-        for k in range(self.nz):
-            gids = []
-            gid1 = np.array([0, 0, k])
-            gid2 = np.array([self.nx-1, self.ny-1, k])
-            dif = (gid2 - gid1) + np.array([1, 1, 1])
-            k = random.randint(1, 999)*(10**(-3))
-            k2 = 0.1*k
-            for l in range(dif[2]):
-                for m in range(dif[1]):
-                    for n in range(dif[0]):
-                        gid = gid1 + np.array([n, m, l])
-                        global_id = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
-                        elem = self.map_gids_in_elems[global_id]
-                        perm_tensor = [k, 0.0, 0.0,
-                                        0.0, k, 0.0,
-                                        0.0, 0.0, k2]
-                        self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
+        for elem in self.all_fine_vols:
+            self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
+
+        # # permeabilidades em camadas z
+        # cont = 0
+        # elems = []
+        # for k in range(self.nz):
+        #     gids = []
+        #     gid1 = np.array([0, 0, k])
+        #     gid2 = np.array([self.nx-1, self.ny-1, k])
+        #     dif = (gid2 - gid1) + np.array([1, 1, 1])
+        #     k = random.randint(1, 999)*(10**(-3))
+        #     k2 = 0.1*k
+        #     for l in range(dif[2]):
+        #         for m in range(dif[1]):
+        #             for n in range(dif[0]):
+        #                 gid = gid1 + np.array([n, m, l])
+        #                 global_id = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
+        #                 elem = self.map_gids_in_elems[global_id]
+        #                 perm_tensor = [k, 0.0, 0.0,
+        #                                 0.0, k, 0.0,
+        #                                 0.0, 0.0, k2]
+        #                 self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
 
     def set_perm_2(self):
         """
@@ -3316,6 +3316,40 @@ class MsClassic_mono:
         solver.Iterate(1000, 1e-9)
 
         return x
+
+    def test_conservation(self):
+        """
+        verifica se o fluxo é conservativo nos volumes da malha fina
+        """
+        lim = 10**(-9)
+
+        for volume in (set(self.all_fine_vols) - set(self.wells)):
+            #1
+            soma = 0.0
+            pvol = self.mb.tag_get_data(self.pms2_tag, volume)[0][0]
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            for adj in adj_volumes:
+                #2
+                padj = self.mb.tag_get_data(self.pms2_tag, adj)[0][0]
+                global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                uni = self.unitary(direction)
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                keq = self.kequiv(kvol, kadj)
+                keq = keq*(np.dot(self.A, uni))
+                grad_p = (padj - pvol)/float(np.dot(self.h, uni))
+                soma += grad_p*(keq)
+
+            if abs(soma) > lim:
+                print('soma nao deu zero')
+                print('soma:{0}'.format(soma))
+                import pdb; pdb.set_trace()
 
     def unitary(self,l):
         """
@@ -3488,8 +3522,9 @@ class MsClassic_mono:
         # #self.add_gr_2()
         # #print(self.vect_gr)
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-        self.corretion_func()
+        # self.corretion_func()
         self.Neuman_problem_6()
+        # self.test_conservation()
 
         # if self.flag_grav == 0:
         #     self.Neuman_problem_4()
