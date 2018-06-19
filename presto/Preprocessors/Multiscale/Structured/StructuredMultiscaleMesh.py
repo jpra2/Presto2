@@ -610,7 +610,6 @@ class StructuredMultiscaleMesh:
                 collocation_point_root_ms,
                 collocation_point)
 
-
     def create_wells(self):
         wells = self.wells
         nx = self.mesh_size[0]

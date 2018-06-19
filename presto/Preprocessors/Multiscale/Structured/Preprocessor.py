@@ -1,5 +1,6 @@
 import numpy as np
 import time
+import sys
 
 from .StructuredMultiscaleMesh import StructuredMultiscaleMesh
 
@@ -109,6 +110,13 @@ class Preprocessor(object):
             self.prop = self.prop_bif
         else:
             print('flag do tipo de simulacao errada')
+            print('valor do flag da simulacao so pode ser 0 ou 1')
+            sys.exit(0)
+
+        if self.prop['gravidade'] not in [0, 1]:
+            print('flag da gravidade errada')
+            print('valor do flag da gravidade so pode ser 0 ou 1')
+            sys.exit(0)
 
 
         self.smm = StructuredMultiscaleMesh(
