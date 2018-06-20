@@ -52,8 +52,8 @@ class MsClassic_mono:
         else:
             self.get_wells_gr()
 
-        self.set_perm()
-        #self.set_perm_2()
+        # self.set_perm()
+        self.set_perm_2()
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
 
@@ -62,7 +62,8 @@ class MsClassic_mono:
             self.map_all_fine_vols = dict(zip(self.all_fine_vols, gids))
             self.calculate_restriction_op()
             # self.run()
-            self.run_3()
+            # self.run_3()
+            self.run_4()
 
         else:
 
@@ -1568,7 +1569,7 @@ class MsClassic_mono:
     def erro_2(self):
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
-            Pms = self.mb.tag_get_data(self.pms2_tag, volume, flat = True)[0]
+            Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
             erro = abs(Pf - Pms)#/float(abs(Pf))
             self.mb.tag_set_data(self.err2_tag, volume, erro)
 
@@ -1742,32 +1743,23 @@ class MsClassic_mono:
 
     def modificando_op(self):
 
-        for volume in self.wells:
+        for volume in self.wells_d:
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-            if global_volume in self.wells_d:
-                fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)
-                primal_volume = self.mb.tag_get_data(
-                    self.primal_id_tag, int(fin_prim), flat=True)[0]
-                primal_volume = self.ident_primal[primal_volume]
-                p = self.trilOP.ExtractGlobalRowCopy(global_volume)
-                index = p[1]
-                map_index = dict(zip(index, range(len(index))))
-                values = p[0]
-                for i in index:
-                    if i == primal_volume:
-                        values[map_index[i]] = 1.0
-                    else:
-                        values[map_index[i]] = 0.0
+            fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)
+            primal_volume = self.mb.tag_get_data(
+                self.primal_id_tag, int(fin_prim), flat=True)[0]
+            primal_volume = self.ident_primal[primal_volume]
+            p = self.trilOP.ExtractGlobalRowCopy(global_volume)
+            index = p[1]
+            map_index = dict(zip(index, range(len(index))))
+            values = p[0]
+            for i in index:
+                if i == primal_volume:
+                    values[map_index[i]] = 1.0
+                else:
+                    values[map_index[i]] = 0.0
 
-                self.trilOP.ReplaceGlobalValues(global_volume, values, index)
-
-        """for volume in self.wells:
-            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-            if global_volume in self.wells_d:
-                p = self.trilOP.ExtractGlobalRowCopy(global_volume)
-                print(global_volume)
-                print(p[1])
-                print(p[0])"""
+            self.trilOP.ReplaceGlobalValues(global_volume, values, index)
 
     def modificando_Tc_Qc(self):
         """
@@ -3295,14 +3287,14 @@ class MsClassic_mono:
                         0.0, 0.5, 0.0,
                         0.0, 0.0, 0.5]
 
-        # gid_lim = 323
-        #
-        # for volume in self.all_fine_vols:
-        #     global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
-        #     if global_volume <= gid_lim:
-        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
-        #     else:
-        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+        gid_lim = 323
+
+        for volume in self.all_fine_vols:
+            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+            if global_volume <= gid_lim:
+                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
+            else:
+                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
 
         # # direcao x
         # gid1 = np.array([0, 0, 0])
@@ -3324,23 +3316,23 @@ class MsClassic_mono:
         #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
 
 
-        gid1 = np.array([0, 0, 0])
-        gid2 = np.array([24, 12, 24])
-        dif = (gid2 - gid1) + np.array([1, 1, 1])
-        gids = []
-
-        for i in range(dif[0]):
-            for j in range(dif[1]):
-                for k in range(dif[2]):
-                    gid = gid1 + np.array([i, j, k])
-                    gids.append(gid[0] + self.nx*gid[1] + self.nx*self.ny*gid[2])
-
-        for volume in self.all_fine_vols:
-            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
-            if global_volume in gids:
-                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
-            else:
-                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+        # gid1 = np.array([0, 0, 0])
+        # gid2 = np.array([24, 12, 24])
+        # dif = (gid2 - gid1) + np.array([1, 1, 1])
+        # gids = []
+        #
+        # for i in range(dif[0]):
+        #     for j in range(dif[1]):
+        #         for k in range(dif[2]):
+        #             gid = gid1 + np.array([i, j, k])
+        #             gids.append(gid[0] + self.nx*gid[1] + self.nx*self.ny*gid[2])
+        #
+        # for volume in self.all_fine_vols:
+        #     global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+        #     if global_volume in gids:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
+        #     else:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
 
     def solve_linear_problem(self, A, b, n):
 
@@ -3595,7 +3587,7 @@ class MsClassic_mono:
         # #print(self.vect_gr)
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
         # self.corretion_func()
-        self.test_conservation_coarse()
+        # self.test_conservation_coarse()
 
         # self.Neuman_problem_6()
 
@@ -3610,8 +3602,8 @@ class MsClassic_mono:
         #     pass
 
 
-        # self.erro()
-        # self.erro_2()
+        self.erro()
+        self.erro_2()
         #
         # # self.erro_3()
         # self.corretion_func()
@@ -3655,6 +3647,41 @@ class MsClassic_mono:
         self.erro()
 
         self.mb.write_file('new_out_mono.vtk')
+
+    def run_4(self):
+        """
+        substitui 1 na linha do operador de prolongamento
+        onde se tem volume com pressao prescrita
+        """
+
+        self.set_global_problem_vf()
+        self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
+        self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
+
+        # Solucao Multiescala
+        self.calculate_prolongation_op_het()
+        self.modificando_op()
+        self.trilOP.FillComplete()
+
+        self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+        self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
+
+        self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
+
+        self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
+        self.calculate_p_end()
+        self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
+
+        self.test_conservation_coarse()
+
+        self.erro()
+
+
+        self.mb.write_file('new_out_mono.vtk')
+
+
+
 
     def simulacoes(self):
         caminho3 = '/home/joao/simulacoes/999'
