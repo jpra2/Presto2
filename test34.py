@@ -61,7 +61,8 @@ class MsClassic_mono:
         if ind == False:
             self.map_all_fine_vols = dict(zip(self.all_fine_vols, gids))
             self.calculate_restriction_op()
-            self.run()
+            # self.run()
+            self.run_3()
 
         else:
 
@@ -1403,20 +1404,56 @@ class MsClassic_mono:
                 # boundary = set(elems_vol) & set(self.elems_wells_d)
                 # gids_bound = self.mb.tag_get_data(self.global_id_tag, boundary, flat=True)
 
-    def create_centroids(self):
+    def create_flux_vector(self):
         """
-        so serve para malhas estruturadas formadas por hexaedros
+        cria um vetor para armazenar os fluxos em cada volume da malha fina
+        os fluxos sao armazenados de acordo com a direcao sendo 6 direcoes
+        para cada volume
         """
-
-        centroids = []
-        for idz in range(self.nz):
-            for idy in range(self.ny):
-                for idx in range(self.nx):
-                    gid = idx + self.nx*idy + self.nx*self.ny*idz
-                    centroids.append(self.hm + np.array([idx*self.h[0], idy*self.h[1], idz*self.h[2]]))
-
-
-        self.map_elems_in_centroids = dict(zip(self.all_fine_vols, centroids))
+        self.store_flux = {}
+        for primal in self.primals:
+            #1
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            primal_id = self.ident_primal[primal_id]
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            volumes_in_interface, volumes_in_primal = self.get_volumes_in_interfaces(
+            fine_elems_in_primal, primal_id, flag = 1)
+            for volume in fine_elems_in_primal:
+                #2
+                flux = {}
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                centroid_volume = self.mesh_topo_util.get_average_position([volume])
+                adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                for adj in adjs_vol:
+                    #3
+                    gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                    if adj in volumes_in_interface:
+                        #4
+                        pvol = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                        padj = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
+                    #3
+                    else:
+                        #4
+                        pvol = self.mb.tag_get_data(self.pcorr_tag, volume, flat=True)[0]
+                        padj = self.mb.tag_get_data(self.pcorr_tag, adj, flat=True)[0]
+                    #3
+                    kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_volume
+                    unit = direction/np.linalg.norm(direction)
+                    #unit = vetor unitario na direcao de direction
+                    uni = self.unitary(direction)
+                    # uni = valor positivo do vetor unitario
+                    kvol = np.dot(np.dot(kvol,uni),uni)
+                    kadj = np.dot(np.dot(kadj,uni),uni)
+                    keq = self.kequiv(kvol, kadj)
+                    keq = keq*(np.dot(self.A, uni))/(self.mi)
+                    grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
+                    q = (grad_p)*keq
+                    flux[tuple(unit)] = q
+                #2
+                self.store_flux[volume] = flux
 
     def create_tags(self, mb):
 
@@ -1521,19 +1558,10 @@ class MsClassic_mono:
         self.rho_tag = mb.tag_get_handle("RHO")
         self.mi_tag = mb.tag_get_handle("MI")
 
-    def create_flux_vector(self):
-        """
-        cria um vetor para armazenar os fluxos em cada volume da malha fina
-        os fluxos sao armazenados de acordo com a direcao sendo 6 direcoes
-        para cada volume
-        """
-
-        pass
-
     def erro(self):
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
-            Pms = self.mb.tag_get_data(self.pms2_tag, volume, flat = True)[0]
+            Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
             erro = 100*(abs((Pf - Pms)/float(Pf)))
             self.mb.tag_set_data(self.err_tag, volume, erro)
 
@@ -1557,7 +1585,7 @@ class MsClassic_mono:
     def erro_4(self):
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
-            Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
+            Pms = self.mb.tag_get_data(self.pms2_tag, volume, flat = True)[0]
             erro = abs(Pf - Pms)#/float(abs(Pf))
             self.mb.tag_set_data(self.err2_tag, volume, erro)
 
@@ -1740,6 +1768,35 @@ class MsClassic_mono:
                 print(global_volume)
                 print(p[1])
                 print(p[0])"""
+
+    def modificando_Tc_Qc(self):
+        """
+        imposicao de pressao na malha grossa
+        """
+        l1 = [0, 9, 18]
+        l2 = [8, 17, 26]
+        std_map = Epetra.Map(self.nc, 0, self.comm)
+        Tc2 = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
+        for i in range(self.nc):
+            #1
+            p = self.Tc.ExtractGlobalRowCopy(i)
+            index = p[1]
+            values = p[0]
+            map_index = dict(zip(index, range(len(index))))
+            if i not in l1+l2:
+                #2
+                Tc2.InsertGlobalValues(i, values, index)
+            #1
+            else:
+                #2
+                Tc2.InsertGlobalValues(i, [1], [i])
+                if i in l1:
+                    self.Qc[i] = 3.0
+                else:
+                    self.Qc[i] = 2.0
+
+        self.Tc = Tc2
+        self.Tc.FillComplete()
 
     def modificar_matriz(self, A, rows, columns):
         """
@@ -2433,7 +2490,7 @@ class MsClassic_mono:
             # print(x_np)
             for volume in all_volumes:
                 #2
-                self.mb.tag_set_data(self.pms2_tag, volume, x[map_volumes[volume]])
+                self.mb.tag_set_data(self.pcorr_tag, volume, x[map_volumes[volume]])
                 # self.mb.tag_set_data(self.pms3_tag, volume, x_np[map_volumes[volume]])
 
     def organize_op(self):
@@ -3301,11 +3358,10 @@ class MsClassic_mono:
     def test_conservation_coarse(self):
         """
         verifica se o fluxo é conservativo nos volumes da malha grossa
-        utilizando a pressao multiescala para calcular os fluxos na interface
-        da malha grossa
+        utilizando a pressao multiescala para calcular os fluxos na interface dos mesmos
         """
         #0
-        lim = 10**(-9)
+        lim = 10**(-6)
         for primal in self.primals:
             #1
             Qc = 0
@@ -3334,11 +3390,13 @@ class MsClassic_mono:
                     keq = self.kequiv(kvol, kadj)
                     keq = keq*(np.dot(self.A, uni))/(self.mi) #*np.dot(self.h, uni))
                     grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
-                    q = -(grad_p)*keq
+                    q = (grad_p)*keq
                     Qc += q
             #1
             print('Primal:{0} ///// Qc: {1}'.format(primal_id, Qc))
-            import pdb; pdb.set_trace()
+            # if Qc > lim:
+            #     print('Qc nao deu zero')
+            #     import pdb; pdb.set_trace()
 
     def unitary(self,l):
         """
@@ -3449,6 +3507,9 @@ class MsClassic_mono:
                 arq.write('\n')
 
     def run(self):
+        """
+        substituicao direta dos valores de pressao prescrita
+        """
 
         # Solucao direta
         self.set_global_problem_vf()
@@ -3468,10 +3529,12 @@ class MsClassic_mono:
         self.calculate_p_end()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
 
-        self.erro_3()
-        self.erro_4()
+        self.test_conservation_coarse()
+        # self.Neuman_problem_6()
+        # self.create_flux_vector()
 
-        
+
+
 
 
 
@@ -3503,6 +3566,9 @@ class MsClassic_mono:
         self.mb.write_file('new_out_mono.vtk')
 
     def run_2(self):
+        """
+        eliminacao das linhas e colunas dos volumes com pressao prescrita
+        """
         #0
         self.calculate_restriction_op_2()
         if self.flag_grav == 0:
@@ -3521,8 +3587,6 @@ class MsClassic_mono:
         self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
         self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
 
-        import pdb; pdb.set_trace()
-
         self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
         self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
         self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
@@ -3531,8 +3595,10 @@ class MsClassic_mono:
         # #print(self.vect_gr)
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
         # self.corretion_func()
-        self.Neuman_problem_6()
         self.test_conservation_coarse()
+
+        # self.Neuman_problem_6()
+
 
         # if self.flag_grav == 0:
         #     self.Neuman_problem_4()
@@ -3544,8 +3610,8 @@ class MsClassic_mono:
         #     pass
 
 
-        self.erro()
-        self.erro_2()
+        # self.erro()
+        # self.erro_2()
         #
         # # self.erro_3()
         # self.corretion_func()
@@ -3556,6 +3622,37 @@ class MsClassic_mono:
         #print(Epetra.NumMyRows(self.trilOP))"""
         ##print(self.trilOP.NumMyRows())
         ##print(self.trilOP.NumMyCols())
+
+        self.mb.write_file('new_out_mono.vtk')
+
+    def run_3(self):
+        """
+        imposicao de pressao na malha grossa
+        """
+
+        self.set_global_problem_vf()
+        self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
+        self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
+
+        # Solucao Multiescala
+        self.calculate_prolongation_op_het()
+        self.trilOP.FillComplete()
+
+        self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+        self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
+
+        self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
+
+        self.modificando_Tc_Qc()
+
+        self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
+        # self.calculate_p_end()
+        self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
+
+        self.test_conservation_coarse()
+
+        self.erro()
 
         self.mb.write_file('new_out_mono.vtk')
 
