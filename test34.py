@@ -46,14 +46,15 @@ class MsClassic_mono:
         self.ro = self.mb.tag_get_data(self.rho_tag, elem0, flat=True)[0]
         self.mi = self.mb.tag_get_data(self.mi_tag, elem0, flat=True)[0]
         self.gama = self.mb.tag_get_data(self.gama_tag, elem0, flat=True)[0]
+        self.atualizar = self.mb.tag_get_data(self.atualizar_tag, elem0, flat=True)[0]
         self.flag_grav = self.mb.tag_get_data(self.flag_gravidade_tag, elem0, flat=True)[0]
         if self.flag_grav == 0:
             self.get_wells()
         else:
             self.get_wells_gr()
 
-        # self.set_perm()
-        self.set_perm_2()
+        self.set_perm()
+        # self.set_perm_2()
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
 
@@ -62,8 +63,8 @@ class MsClassic_mono:
             self.map_all_fine_vols = dict(zip(self.all_fine_vols, gids))
             self.calculate_restriction_op()
             # self.run()
-            # self.run_3()
-            self.run_4()
+            self.run_3()
+            # self.run_4()
 
         else:
 
@@ -1466,6 +1467,10 @@ class MsClassic_mono:
                         "CORRETION2", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
 
+        self.flux_coarse_tag = mb.tag_get_handle(
+                        "FLUX_COARSE", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
         self.Pc2_tag = mb.tag_get_handle(
                         "PC2", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
@@ -1542,6 +1547,8 @@ class MsClassic_mono:
             "FINE_PRIMAL_ID", 1, types.MB_TYPE_INTEGER, True,
             types.MB_TAG_SPARSE)
 
+
+        self.atualizar_tag = mb.tag_get_handle("ATUALIZAR")
         self.primal_id_tag = mb.tag_get_handle("PRIMAL_ID")
         self.fine_to_primal_tag = mb.tag_get_handle("FINE_TO_PRIMAL")
         self.valor_da_prescricao_tag = mb.tag_get_handle("VALOR_DA_PRESCRICAO")
@@ -1609,14 +1616,22 @@ class MsClassic_mono:
         for volume in fine_elems_in_primal:
             #1
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+
             adjs_volume = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
             for adj in adjs_volume:
                 #2
+                global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
                 fin_prim = self.mb.tag_get_data(self.fine_to_primal_tag, adj, flat=True)
-                primal_adj = self.mb.tag_get_data(
-                    self.primal_id_tag, int(fin_prim), flat=True)[0]
+                primal_adj = self.mb.tag_get_data(self.primal_id_tag, int(fin_prim), flat=True)[0]
                 if primal_adj != primal_id:
                     #3
+
+                    # print('global volume: {0}'.format(global_volume))
+                    # print('primal_id vol: {0}'.format(primal_id))
+                    # print('global adj: {0}'.format(global_adj))
+                    # print('primal_id adj: {0}'.format(primal_adj))
+                    # print('\n')
+                    # import pdb; pdb.set_trace()
                     volumes_in_interface.append(adj)
                     volumes_in_primal.append(volume)
         #0
@@ -1740,6 +1755,32 @@ class MsClassic_mono:
         keq = (2*k1*k2)/(k1+k2)
 
         return keq
+
+    def load_ops(self):
+        lim = 10**(-7)
+        OP = np.load('OP.npy')
+        OR = np.load('OR.npy')
+        sz_op = OP.shape[0]
+        std_map = Epetra.Map(sz_op, 0, self.comm)
+        self.trilOP = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
+        self.trilOR = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+
+        for i in range(sz_op):
+            index = list(np.nonzero(OP[i])[0])
+            values = list(OP[i, index])
+            if sum(values) < lim:
+                continue
+            self.trilOP.InsertGlobalValues(i, values, index)
+
+        for i in range(self.nc):
+            index = list(np.nonzero(OR[i])[0])
+            values = list(OR[i, index])
+            if sum(values) < lim:
+                continue
+            self.trilOR.InsertGlobalValues(i, values, index)
+
+        self.trilOP.FillComplete()
+        self.trilOR.FillComplete()
 
     def modificando_op(self):
 
@@ -2632,6 +2673,22 @@ class MsClassic_mono:
         self.V = V
         self.tam = np.array([tx, ty, tz])
 
+    def save_ops(self):
+
+        OP = np.zeros((self.nf_ic, self.nf_ic))
+        OR = OP.copy()
+
+        for i in range(self.nf_ic):
+            p = self.trilOP.ExtractGlobalRowCopy(i)
+            OP[i, p[1]] = p[0]
+
+        for i in range(self.nc):
+            p = self.trilOR.ExtractGlobalRowCopy(i)
+            OR[i, p[1]] = p[0]
+
+        np.save('OP', OP)
+        np.save('OR', OR)
+
     def set_global_problem(self):
         """
         Obtem a matriz de transmissibilidade por diferencas finitas
@@ -3357,11 +3414,11 @@ class MsClassic_mono:
         for primal in self.primals:
             #1
             Qc = 0
-            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
-            primal_id = self.ident_primal[primal_id]
+            primal_id1 = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            primal_id = self.ident_primal[primal_id1]
             fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
             volumes_in_interface, volumes_in_primal = self.get_volumes_in_interfaces(
-            fine_elems_in_primal, primal_id, flag = 1)
+            fine_elems_in_primal, primal_id1, flag = 1)
             for volume in volumes_in_primal:
                 #2
                 adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
@@ -3386,6 +3443,7 @@ class MsClassic_mono:
                     Qc += q
             #1
             print('Primal:{0} ///// Qc: {1}'.format(primal_id, Qc))
+            self.mb.tag_set_data(self.flux_coarse_tag, fine_elems_in_primal, np.repeat(Qc, len(fine_elems_in_primal)))
             # if Qc > lim:
             #     print('Qc nao deu zero')
             #     import pdb; pdb.set_trace()
@@ -3562,7 +3620,8 @@ class MsClassic_mono:
         eliminacao das linhas e colunas dos volumes com pressao prescrita
         """
         #0
-        self.calculate_restriction_op_2()
+        lim = 10**(-7)
+        t1 = time.time()
         if self.flag_grav == 0:
             self.set_global_problem_vf_3()
         else:
@@ -3573,8 +3632,21 @@ class MsClassic_mono:
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
         self.organize_Pf()
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
-        self.calculate_prolongation_op_het()
-        self.organize_op()
+
+        t2 = time.time()
+        print(' tempo Solucao direta')
+        print(t2-t1)
+        print('\n')
+
+        if self.atualizar == 1:
+
+            self.calculate_restriction_op_2()
+            self.calculate_prolongation_op_het()
+            self.organize_op()
+
+        else:
+            self.load_ops()
+
 
         self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
         self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
@@ -3586,65 +3658,141 @@ class MsClassic_mono:
         # #self.add_gr_2()
         # #print(self.vect_gr)
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+        t3 = time.time()
+        print(' tempo Solucao Multiescala')
+        print(t3-t2)
+        print('\n')
+
         # self.corretion_func()
-        # self.test_conservation_coarse()
-
-        # self.Neuman_problem_6()
-
-
-        # if self.flag_grav == 0:
-        #     self.Neuman_problem_4()
-        #     self.erro()
-        #     pass
-        # else:
-        #     self.Neuman_problem_4_gr_2()
-        #     self.erro()
-        #     pass
-
-
-        self.erro()
-        self.erro_2()
+        self.test_conservation_coarse()
         #
-        # # self.erro_3()
-        # self.corretion_func()
-        # self.corretion_func_gr()
-        #self.add_gr()
-        #self.obter_grafico()
-        #"""print(Epetra.NumMyCols(self.trilOP))
-        #print(Epetra.NumMyRows(self.trilOP))"""
-        ##print(self.trilOP.NumMyRows())
-        ##print(self.trilOP.NumMyCols())
+        # # self.Neuman_problem_6()
+        #
+        #
+        # # if self.flag_grav == 0:
+        # #     self.Neuman_problem_4()
+        # #     self.erro()
+        # #     pass
+        # # else:
+        # #     self.Neuman_problem_4_gr_2()
+        # #     self.erro()
+        # #     pass
+        #
+        #
+        # self.erro()
+        # self.erro_2()
+        # #
+        # # # self.erro_3()
+        # # self.corretion_func()
+        # # self.corretion_func_gr()
+        # #self.add_gr()
+        # #self.obter_grafico()
+        # #"""print(Epetra.NumMyCols(self.trilOP))
+        # #print(Epetra.NumMyRows(self.trilOP))"""
+        # ##print(self.trilOP.NumMyRows())
+        # ##print(self.trilOP.NumMyCols())
 
         self.mb.write_file('new_out_mono.vtk')
+
+        if self.atualizar == 1:
+            self.save_ops()
 
     def run_3(self):
         """
         imposicao de pressao na malha grossa
         """
 
+        lim = 10**(-7)
         self.set_global_problem_vf()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
 
-        # Solucao Multiescala
-        self.calculate_prolongation_op_het()
-        self.trilOP.FillComplete()
 
-        self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
-        self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
 
-        self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
+        for volume in self.all_fine_vols:
+            q = 0
+            gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            for adj in adjs_vol:
+                gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                pvol = self.mb.tag_get_data(self.pf_tag, volume, flat=True)[0]
+                padj = self.mb.tag_get_data(self.pf_tag, adj, flat=True)[0]
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
+                direction = adj_centroid - volume_centroid
+                uni = self.unitary(direction)
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                keq = self.kequiv(kvol, kadj)/(self.mi)
+                grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
+                q += grad_p*(keq)*(np.dot(self.A, uni))
+            if abs(q) > lim:
+                print(gid_vol)
+                print(q)
+                import pdb; pdb.set_trace()
 
-        self.modificando_Tc_Qc()
 
-        self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
-        self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
-        # self.calculate_p_end()
-        self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
 
-        self.test_conservation_coarse()
 
-        self.erro()
+
+        # for primal in self.primals:
+        #     #1
+        #     Qc = 0
+        #     primal_id1 = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+        #     primal_id = self.ident_primal[primal_id1]
+        #     print('primal_id')
+        #     print(primal_id)
+        #     fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+        #     for volume in fine_elems_in_primal:
+        #         global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+        #         fine_to_primal = self.mb.tag_get_data(self.fine_to_primal_tag, volume, flat=True)[0]
+        #         primal_vol = self.mb.tag_get_data(self.primal_id_tag, int(fine_to_primal), flat=True)[0]
+        #         primal_vol = self.ident_primal[primal_vol]
+        #         adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+        #         print('global_volume: {0}'.format(global_volume))
+        #         print('primal_vol: {0}'.format(primal_vol))
+        #         print('\n')
+        #
+        #         adjs_volume = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+        #         for adj in adjs_vol:
+        #             global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+        #             fine_to_primal = self.mb.tag_get_data(self.fine_to_primal_tag, adj, flat=True)[0]
+        #             primal_adj = self.mb.tag_get_data(self.primal_id_tag, int(fine_to_primal), flat=True)[0]
+        #             primal_adj = self.ident_primal[primal_adj]
+        #             print('global_adj: {0}'.format(global_adj))
+        #             print('primal_adj: {0}'.format(primal_adj))
+        #
+        #         print('\n')
+        #
+        #         import pdb; pdb.set_trace()
+
+
+
+
+
+
+        # # Solucao Multiescala
+        # self.calculate_prolongation_op_het()
+        # self.trilOP.FillComplete()
+        #
+        # self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+        # self.trilOR, self.trans_fine, self.nf), self.trilOP, self.nf), self.nc, self.nc)
+        #
+        # self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf, self.b), self.nc)
+        #
+        # self.modificando_Tc_Qc()
+        #
+        # self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        # self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
+        # # self.calculate_p_end()
+        # self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
+
+        # self.test_conservation_coarse()
+        print('run_3')
+
+        # self.erro()
 
         self.mb.write_file('new_out_mono.vtk')
 
@@ -3653,11 +3801,14 @@ class MsClassic_mono:
         substitui 1 na linha do operador de prolongamento
         onde se tem volume com pressao prescrita
         """
-
+        t1 = time.time()
         self.set_global_problem_vf()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
 
+        print('\n')
+
+        t2 = time.time()
         # Solucao Multiescala
         self.calculate_prolongation_op_het()
         self.modificando_op()
@@ -3670,16 +3821,21 @@ class MsClassic_mono:
 
         self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
         self.Pms = self.multimat_vector(self.trilOP, self.nf, self.Pc)
-        self.calculate_p_end()
+        # self.calculate_p_end()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
 
-        self.test_conservation_coarse()
+        t3 = time.time()
+
+        print('tempo Solucao Multiescala')
+        print(t3-t2)
+        print('\n')
+
+        # self.test_conservation_coarse()
 
         self.erro()
 
 
         self.mb.write_file('new_out_mono.vtk')
-
 
 
 

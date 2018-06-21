@@ -104,13 +104,13 @@ class StructuredMultiscaleMesh:
         coords = np.array([(i, j, k)
                            for k in (
                                np.arange(
-                                   self.mesh_size[2]+1, dtype='float64') *self.mesh_size[2])
+                                   self.mesh_size[2]+1, dtype='float64') *self.block_size[2])
                            for j in (
                                np.arange(
-                                   self.mesh_size[1]+1, dtype='float64') *self.mesh_size[1])
+                                   self.mesh_size[1]+1, dtype='float64') *self.block_size[1])
                            for i in (
                                np.arange(
-                                   self.mesh_size[0]+1, dtype='float64') *self.mesh_size[0])
+                                   self.mesh_size[0]+1, dtype='float64') *self.block_size[0])
                            ], dtype='float64')
 
 
@@ -169,6 +169,8 @@ class StructuredMultiscaleMesh:
             self.loops_tag = self.mb.tag_get_handle(
                 "LOOPS", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
 
+        self.atualizar_tag = self.mb.tag_get_handle(
+            "ATUALIZAR", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
 
         self.grav_tag = self.mb.tag_get_handle(
             "GRAV", 1, types.MB_TYPE_INTEGER, types.MB_TAG_SPARSE, True)
@@ -863,6 +865,7 @@ class StructuredMultiscaleMesh:
         elem = self._get_elem_by_ijk((0, 0, 0))
         self.mb.tag_set_data(self.grav_tag, elem, self.prop['gravidade'])
         self.mb.tag_set_data(self.flagsim_tag, elem, self.prop['flag_sim'])
+        self.mb.tag_set_data(self.atualizar_tag, elem, self.prop['atualizar'])
 
         if self.prop['flag_sim'] == 0:
             self.mb.tag_set_data(self.mi_tag, elem, self.prop['mi'])

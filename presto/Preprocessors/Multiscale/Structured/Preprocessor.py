@@ -64,6 +64,9 @@ class Preprocessor(object):
 
         self.wells = d[:]
 
+        atualizar = self.configs['atualizar-operadores']
+        self.atualizar = int(atualizar['flag'])
+
         self.sim = self.configs['tipo-de-simulacao']
         self.sim = int(self.sim['flag'])
 
@@ -73,9 +76,9 @@ class Preprocessor(object):
         self.rho = float(self.propriedades_mono['rho'])
         self.gravidade = int(self.propriedades_mono['gravidade'])
 
-        prop = [self.sim, self.mi, self.gama, self.rho, self.gravidade]
+        prop = [self.sim, self.mi, self.gama, self.rho, self.gravidade, self.atualizar]
 
-        names = ['flag_sim', 'mi', 'gama', 'rho', 'gravidade']
+        names = ['flag_sim', 'mi', 'gama', 'rho', 'gravidade', 'atualizar']
 
         self.prop_mono = dict(zip(names, prop))
 
@@ -97,10 +100,10 @@ class Preprocessor(object):
 
         prop = [self.sim, self.mi_w, self.mi_o, self.rho_w, self.rho_o, self.gama_w,
                  self.gama_o, self.nw, self.no, self.gravidade, self.Sor, self.Swc, self.Swi,
-                    self.t, self.loops]
+                    self.t, self.loops, self.atualizar]
 
         names = ['flag_sim', 'mi_w', 'mi_o', 'rho_w', 'rho_o', 'gama_w', 'gama_o',
-                     'nw', 'no', 'gravidade', 'Sor', 'Swc', 'Swi', 't', 'loops']
+                     'nw', 'no', 'gravidade', 'Sor', 'Swc', 'Swi', 't', 'loops', 'atualizar']
 
         self.prop_bif = dict(zip(names, prop))
 
@@ -116,6 +119,11 @@ class Preprocessor(object):
         if self.prop['gravidade'] not in [0, 1]:
             print('flag da gravidade errada')
             print('valor do flag da gravidade so pode ser 0 ou 1')
+            sys.exit(0)
+
+        if self.atualizar not in [0, 1]:
+            print('flag da atualizacao dos operadores errada')
+            print('valor do flag da atualizacao so pode ser 0 ou 1')
             sys.exit(0)
 
 
