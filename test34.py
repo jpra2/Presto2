@@ -1406,7 +1406,50 @@ class MsClassic_mono:
                 # boundary = set(elems_vol) & set(self.elems_wells_d)
                 # gids_bound = self.mb.tag_get_data(self.global_id_tag, boundary, flat=True)
 
-    def create_flux_vector(self):
+    def create_flux_vector_pf(self):
+        """
+        cria um vetor para armazenar os fluxos em cada volume da malha fina
+        os fluxos sao armazenados de acordo com a direcao sendo 6 direcoes
+        para cada volume
+        """
+        self.store_flux_pf = {}
+        for primal in self.primals:
+            #1
+            primal_id1 = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            primal_id = self.ident_primal[primal_id1]
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            volumes_in_interface, volumes_in_primal = self.get_volumes_in_interfaces(
+            fine_elems_in_primal, primal_id1, flag = 1)
+            for volume in fine_elems_in_primal:
+                #2
+                flux = {}
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                centroid_volume = self.mesh_topo_util.get_average_position([volume])
+                adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                for adj in adjs_vol:
+                    #3
+                    gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                    pvol = self.mb.tag_get_data(self.pf_tag, volume, flat=True)[0]
+                    padj = self.mb.tag_get_data(self.pf_tag, adj, flat=True)[0]
+                    kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_volume
+                    unit = direction/np.linalg.norm(direction)
+                    #unit = vetor unitario na direcao de direction
+                    uni = self.unitary(direction)
+                    # uni = valor positivo do vetor unitario
+                    kvol = np.dot(np.dot(kvol,uni),uni)
+                    kadj = np.dot(np.dot(kadj,uni),uni)
+                    keq = self.kequiv(kvol, kadj)
+                    keq = keq*(np.dot(self.A, uni))/(self.mi)
+                    grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
+                    q = (grad_p)*keq
+                    flux[tuple(unit)] = q
+                #2
+                self.store_flux_pf[volume] = flux
+
+    def create_flux_vector_pms(self):
         """
         cria um vetor para armazenar os fluxos em cada volume da malha fina
         os fluxos sao armazenados de acordo com a direcao sendo 6 direcoes
@@ -2689,6 +2732,12 @@ class MsClassic_mono:
         np.save('OP', OP)
         np.save('OR', OR)
 
+    def set_contorno(self):
+        self.mb.tag_set_data(self.contorno_tag, self.wells_inj, np.repeat(1.0, len(self.wells_inj)))
+        self.mb.tag_set_data(self.contorno_tag, self.wells_prod, np.repeat(0.0, len(self.wells_prod)))
+        elems = set(self.all_fine_vols) - set(self.wells)
+        self.mb.tag_set_data(self.contorno_tag, elems, np.repeat(0.5, len(elems)))
+
     def set_global_problem(self):
         """
         Obtem a matriz de transmissibilidade por diferencas finitas
@@ -3620,6 +3669,7 @@ class MsClassic_mono:
         eliminacao das linhas e colunas dos volumes com pressao prescrita
         """
         #0
+        self.set_contorno()
         lim = 10**(-7)
         t1 = time.time()
         if self.flag_grav == 0:
@@ -3658,11 +3708,46 @@ class MsClassic_mono:
         # #self.add_gr_2()
         # #print(self.vect_gr)
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+        self.Neuman_problem_6()
+        self.create_flux_vector_pms()
+        self.create_flux_vector_pf()
+
+        # with open('comparacao_de_fluxos.txt', 'w') as arq:
+        #
+        #     for volume in self.all_fine_vols:
+        #         gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+        #         flux_pms = self.store_flux[volume]
+        #         flux_pf = self.store_flux_pf[volume]
+        #         v1 = np.array([i for i in flux_pms.values()])
+        #         v2 = np.array([i for i in flux_pf.values()])
+        #         erro = []
+        #         for i in range(len(v1)):
+        #             erro.append(abs((v2[i] - v1[i])))
+        #
+        #         # print('gid: {0}'.format(gid_vol))
+        #         # print('flux_pms')
+        #         # print(flux_pms)
+        #         # print('flux_pf')
+        #         # print(flux_pf)
+        #         # print('erro')
+        #         # print(erro)
+        #         # print('\n')
+        #         arq.write('gid:{0}\n'.format(gid_vol))
+        #         arq.write('flux_pms\n')
+        #         arq.write('{0}\n'.format(flux_pms))
+        #         arq.write('flux_pf\n')
+        #         arq.write('{0}\n'.format(flux_pf))
+        #         arq.write('erro\n')
+        #         arq.write('{0}\n'.format(erro))
+        #         arq.write('\n')
+        #         arq.write('\n')
+
+
+
         t3 = time.time()
         print(' tempo Solucao Multiescala')
         print(t3-t2)
         print('\n')
-
         # self.corretion_func()
         self.test_conservation_coarse()
         #
@@ -3836,8 +3921,6 @@ class MsClassic_mono:
 
 
         self.mb.write_file('new_out_mono.vtk')
-
-
 
     def simulacoes(self):
         caminho3 = '/home/joao/simulacoes/999'
