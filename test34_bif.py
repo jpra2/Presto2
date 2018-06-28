@@ -354,6 +354,11 @@ class Msclassic_bif:
         self.delta_t = (cfl*h)/float(vmax*dfds)
 
     def create_tags(self, mb):
+
+        self.flux_coarse_tag = mb.tag_get_handle(
+                        "FLUX_COARSE", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
         self.prod_tag = mb.tag_get_handle(
                         "PROD", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
@@ -875,7 +880,7 @@ class Msclassic_bif:
     def erro_2(self):
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
-            Pms = self.mb.tag_get_data(self.pms2_tag, volume, flat = True)[0]
+            Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
             erro = abs(Pf - Pms)#/float(abs(Pf))
             self.mb.tag_set_data(self.err2_tag, volume, erro)
 
@@ -1499,13 +1504,13 @@ class Msclassic_bif:
         a = a.split("=")
         a = a[1].strip()
         a = a.split(",")
-        tx = int(a[0].strip())
-        ty = int(a[1].strip())
-        tz = int(a[2].strip())
+        hx = int(a[0].strip())
+        hy = int(a[1].strip())
+        hz = int(a[2].strip())
 
-        hx = tx/float(nx)
-        hy = ty/float(ny)
-        hz = tz/float(nz)
+        tx = hx*nx
+        ty = hy*ny
+        tz = hz*nz
         h = np.array([hx, hy, hz])
         h2 = np.array([hx**2, hy**2, hz**2])
 
@@ -1811,11 +1816,11 @@ class Msclassic_bif:
                 tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
                 if tipo_de_poco == 1:
                     #3
-                    self.b[self.map_vols_ic[global_volume]] = self.set_q[index]*self.V
+                    self.b[self.map_vols_ic[global_volume]] += self.set_q[index]
                 #2
                 else:
                     #3
-                    self.b[self.map_vols_ic[global_volume]] = -self.set_q[index]*self.V
+                    self.b[self.map_vols_ic[global_volume]] += -self.set_q[index]
         #0
         for volume in self.neigh_wells_d:
             #1
@@ -1866,11 +1871,11 @@ class Msclassic_bif:
                 tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, volume)
                 if tipo_de_poco == 1:
                     #3
-                    self.b[self.map_vols_ic[global_volume]] += self.set_q[index]*V
+                    self.b[self.map_vols_ic[global_volume]] += self.set_q[index]
                 #2
                 else:
                     #3
-                    self.b[self.map_vols_ic[global_volume]] += -self.set_q[index]*V
+                    self.b[self.map_vols_ic[global_volume]] += -self.set_q[index]
         #0
         self.trans_fine.FillComplete()
 
@@ -2035,6 +2040,82 @@ class Msclassic_bif:
         self.Pf2 = np.linalg.solve(trans_fine_np, b_np)
         mb.tag_set_data(self.pf2_tag, self.all_fine_vols, np.asarray(self.Pf2))
 
+    def test_conservation_coarse(self):
+        """
+        verifica se o fluxo é conservativo nos volumes da malha grossa
+        utilizando a pressao multiescala para calcular os fluxos na interface dos mesmos
+        """
+        #0
+        lim = 10**(-6)
+        soma = 0
+        Qc2 = []
+        prim = []
+        for primal in self.primals:
+            #1
+            Qc = 0
+            my_adjs = set()
+            primal_id1 = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            primal_id = self.ident_primal[primal_id1]
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            volumes_in_interface, volumes_in_primal = self.get_volumes_in_interfaces(
+            fine_elems_in_primal, primal_id1, flag = 1)
+            gids = self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True)
+            for volume in volumes_in_primal:
+                #2
+                gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                for adj in adjs_vol:
+                    #3
+                    if adj not in volumes_in_interface or adj in my_adjs:
+                        continue
+                    my_adjs.add(adj)
+                    gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                    pvol = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                    padj = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
+                    kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                    kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    centroid_volume = self.mesh_topo_util.get_average_position([volume])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_volume
+                    uni = self.unitary(direction)
+                    kvol = np.dot(np.dot(kvol,uni),uni)
+                    kadj = np.dot(np.dot(kadj,uni),uni)
+                    lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume)[0][0]
+                    lamb_o_vol = self.mb.tag_get_data(self.lamb_o_tag, volume)[0][0]
+                    lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj)[0][0]
+                    lamb_o_adj = self.mb.tag_get_data(self.lamb_o_tag, adj)[0][0]
+                    kvol = kvol*(lamb_w_vol + lamb_o_vol)
+                    kadj = kadj*(lamb_w_adj + lamb_o_adj)
+                    keq = self.kequiv(kvol, kadj)
+                    keq = keq*(np.dot(self.A, uni))#*np.dot(self.h, uni))
+                    grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
+                    q = (grad_p)*keq
+                    # print(gid_vol)
+                    # print(gid_adj)
+                    # print(pvol)
+                    # print(padj)
+                    # print(grad_p)
+                    # print(q)
+                    # print('\n')
+                    # import pdb; pdb.set_trace()
+                    Qc += q
+            #1
+            # print('Primal:{0} ///// Qc: {1}'.format(primal_id, Qc))
+
+            Qc2.append(Qc)
+            prim.append(primal_id1)
+            # print(Qc2)
+            # print(prim)
+            # import pdb; pdb.set_trace()
+            self.mb.tag_set_data(self.flux_coarse_tag, fine_elems_in_primal, np.repeat(Qc, len(fine_elems_in_primal)))
+            # if Qc > lim:
+            #     print('Qc nao deu zero')
+            #     import pdb; pdb.set_trace()
+        with open('Qc.txt', 'w') as arq:
+            for i,j in zip(prim, Qc2):
+                arq.write('Primal:{0} ///// Qc: {1}\n'.format(i, j))
+
+
     def unitary(self, l):
         """
         obtem o vetor unitario na direcao positiva de l
@@ -2167,23 +2248,24 @@ class Msclassic_bif:
         self.set_sat_in()
         #self.set_lamb()
         self.set_lamb_2()
-        #self.calculate_restriction_op_2()
+        self.calculate_restriction_op_2()
         self.set_global_problem_vf_2()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
         self.organize_Pf()
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
-        #self.calculate_prolongation_op_het()
-        #self.organize_op()
-        #self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
-        #self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
-        #self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
-        #self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
-        #self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
-        #self.organize_Pms()
-        #self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+        self.calculate_prolongation_op_het()
+        self.organize_op()
+        self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+        self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+        self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+        self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+        self.organize_Pms()
+        self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+        self.test_conservation_coarse()
         #self.Neuman_problem_4_3()
         #self.erro()
-        #self.erro_2()
+        self.erro_2()
         #qmax, fi = self.div_max_3(self.pf_tag)
         #self.cfl(fi, qmax)
         #print('qmax')
@@ -2202,34 +2284,34 @@ class Msclassic_bif:
         print(t_)
         print('t')
 
-        while t_ <= self.t and self.loop < self.loops:
-            #1
-            self.calculate_sat()
-            self.set_lamb_2()
-            #self.set_lamb()
-            self.set_global_problem_vf_2()
-            self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
-            self.organize_Pf()
-            self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
-            #self.calculate_prolongation_op_het()
-            #self.organize_op()
-            #self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
-            #self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
-            #self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
-            #self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
-            #self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
-            #self.organize_Pms()
-            #self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-            #self.Neuman_problem_4_3()
-            #self.erro()
-            #self.erro_2()
-            qmax, fi = self.div_max_3(self.pf_tag)
-            self.cfl(fi, qmax)
-            #vmax, h, dfds = self.vel_max(self.pf_tag)
-            #self.cfl_2(vmax, h, dfds)
-            print('delta_t: {0}'.format(self.delta_t))
-            print('loop: {0}'.format(self.loop))
-            print('\n')
-            self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
-            self.loop += 1
-            t_ = t_ + self.delta_t
+        # while t_ <= self.t and self.loop < self.loops:
+        #     #1
+        #     self.calculate_sat()
+        #     self.set_lamb_2()
+        #     #self.set_lamb()
+        #     self.set_global_problem_vf_2()
+        #     self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
+        #     self.organize_Pf()
+        #     self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
+        #     #self.calculate_prolongation_op_het()
+        #     #self.organize_op()
+        #     #self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+        #     #self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+        #     #self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+        #     #self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+        #     #self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+        #     #self.organize_Pms()
+        #     #self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+        #     #self.Neuman_problem_4_3()
+        #     #self.erro()
+        #     #self.erro_2()
+        #     qmax, fi = self.div_max_3(self.pf_tag)
+        #     self.cfl(fi, qmax)
+        #     #vmax, h, dfds = self.vel_max(self.pf_tag)
+        #     #self.cfl_2(vmax, h, dfds)
+        #     print('delta_t: {0}'.format(self.delta_t))
+        #     print('loop: {0}'.format(self.loop))
+        #     print('\n')
+        #     self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
+        #     self.loop += 1
+        #     t_ = t_ + self.delta_t
