@@ -57,6 +57,7 @@ class MsClassic_mono:
         # self.set_perm_2()
         self.nf = len(self.all_fine_vols)
         self.nc = len(self.primals)
+        self.map_all_fine_vols = dict(zip(self.all_fine_vols, gids))
 
 
         if ind == False:
@@ -1413,41 +1414,35 @@ class MsClassic_mono:
         para cada volume
         """
         self.store_flux_pf = {}
-        for primal in self.primals:
+
+        for volume in self.all_fine_vols:
             #1
-            primal_id1 = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
-            primal_id = self.ident_primal[primal_id1]
-            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
-            volumes_in_interface, volumes_in_primal = self.get_volumes_in_interfaces(
-            fine_elems_in_primal, primal_id1, flag = 1)
-            for volume in fine_elems_in_primal:
+            flux = {}
+            kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+            centroid_volume = self.mesh_topo_util.get_average_position([volume])
+            adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+            gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            pvol = self.mb.tag_get_data(self.pf2_tag, volume, flat=True)[0]
+            for adj in adjs_vol:
                 #2
-                flux = {}
-                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
-                centroid_volume = self.mesh_topo_util.get_average_position([volume])
-                adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
-                gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-                for adj in adjs_vol:
-                    #3
-                    gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
-                    pvol = self.mb.tag_get_data(self.pf_tag, volume, flat=True)[0]
-                    padj = self.mb.tag_get_data(self.pf_tag, adj, flat=True)[0]
-                    kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
-                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
-                    direction = centroid_adj - centroid_volume
-                    unit = direction/np.linalg.norm(direction)
-                    #unit = vetor unitario na direcao de direction
-                    uni = self.unitary(direction)
-                    # uni = valor positivo do vetor unitario
-                    kvol = np.dot(np.dot(kvol,uni),uni)
-                    kadj = np.dot(np.dot(kadj,uni),uni)
-                    keq = self.kequiv(kvol, kadj)
-                    keq = keq*(np.dot(self.A, uni))/(self.mi)
-                    grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
-                    q = (grad_p)*keq
-                    flux[tuple(unit)] = q
-                #2
-                self.store_flux_pf[volume] = flux
+                gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                padj = self.mb.tag_get_data(self.pf2_tag, adj, flat=True)[0]
+                kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                direction = centroid_adj - centroid_volume
+                unit = direction/np.linalg.norm(direction)
+                #unit = vetor unitario na direcao de direction
+                uni = self.unitary(direction)
+                # uni = valor positivo do vetor unitario
+                kvol = np.dot(np.dot(kvol,uni),uni)
+                kadj = np.dot(np.dot(kadj,uni),uni)
+                keq = self.kequiv(kvol, kadj)
+                keq = keq*(np.dot(self.A, uni))/(self.mi)
+                grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
+                q = (grad_p)*keq
+                flux[tuple(unit)] = q
+            #1
+            self.store_flux_pf[volume] = flux
 
     def create_flux_vector_pms(self):
         """
@@ -1497,21 +1492,24 @@ class MsClassic_mono:
                     keq = self.kequiv(kvol, kadj)
                     keq = keq*(np.dot(self.A, uni))/(self.mi)
                     keq2 = keq/self.mi
+                    pvol2 = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                    padj2 = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
                     grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
+                    grad_p2 = (padj2 - pvol2)/float(abs(np.dot(direction, uni)))
                     q = (grad_p)*keq
                     if gid_adj > gid_vol:
-                        v = -(grad_p)*keq2
+                        v = -(grad_p2)*keq2
                     else:
-                        v = (grad_p)*keq2
+                        v = (grad_p2)*keq2
 
                     flux[tuple(unit)] = q
                     velocity[tuple(unit)] = v
 
                 #2
-                print(gid_vol)
-                print(velocity)
-                print('\n')
-                import pdb; pdb.set_trace()
+                # print(gid_vol)
+                # print(velocity)
+                # print('\n')
+                # import pdb; pdb.set_trace()
                 self.store_flux[volume] = flux
                 self.store_velocity[volume] = velocity
 
@@ -1531,6 +1529,10 @@ class MsClassic_mono:
 
         self.flux_fine_pms_tag = mb.tag_get_handle(
                         "FLUX_FINE_PMS", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
+        self.flux_fine_pf_tag = mb.tag_get_handle(
+                        "FLUX_FINE_PF", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
 
         self.Pc2_tag = mb.tag_get_handle(
@@ -1952,7 +1954,7 @@ class MsClassic_mono:
             kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
             kadj = np.dot(np.dot(kadj,uni),uni)
             keq = self.kequiv(kvol, kadj)
-            keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+            keq = keq*(np.dot(self.A, uni))/float(abs(self.mi*np.dot(direction, uni)))
             temp_ids.append(map_id[adj])
             temp_k.append(-keq)
             kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
@@ -3242,32 +3244,40 @@ class MsClassic_mono:
         """
         #0
         std_map = Epetra.Map(len(self.all_fine_vols),0,self.comm)
-        self.trans_fine = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
-        self.b = Epetra.Vector(std_map)
+        self.A_np = np.zeros((len(self.all_fine_vols), len(self.all_fine_vols)))
+        self.b_np = np.zeros(len(self.all_fine_vols))
+
+        self.trans_fine2 = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
+        self.b2 = Epetra.Vector(std_map)
         for volume in self.all_fine_vols:
             #1
             global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
             if volume not in self.wells_d:
                 #2
                 temp_k, temp_glob_adj = self.mount_lines_1(volume, self.map_all_fine_vols)
-                self.trans_fine.InsertGlobalValues(global_volume, temp_k, temp_glob_adj)
+                self.trans_fine2.InsertGlobalValues(global_volume, temp_k, temp_glob_adj)
+                self.A_np[global_volume, temp_glob_adj] = temp_k
                 if volume in self.wells_n:
                     #3
                     index = self.wells_n.index(volume)
                     if volume in self.wells_inj:
                         #4
-                        self.b[global_volume] = self.set_q[index]
+                        self.b2[global_volume] += self.set_q[index]
+                        self.b_np[global_volume] += self.set_q[index]
                     #3
                     else:
                         #4
-                        self.b[global_volume] = -self.set_q[index]
+                        self.b2[global_volume] += -self.set_q[index]
+                        self.b_np[global_volume] += -self.set_q[index]
             #1
             else:
                 index = self.wells_d.index(volume)
-                self.trans_fine.InsertGlobalValues(global_volume, [1.0], [global_volume])
-                self.b[global_volume] = self.set_p[index]
+                self.trans_fine2.InsertGlobalValues(global_volume, [1.0], [global_volume])
+                self.A_np[global_volume, global_volume] = 1.0
+                self.b2[global_volume] = self.set_p[index]
+                self.b_np[global_volume] = self.set_p[index]
         #0
-        self.trans_fine.FillComplete()
+        self.trans_fine2.FillComplete()
 
     def set_global_problem_vf_3(self):
         """
@@ -3280,6 +3290,7 @@ class MsClassic_mono:
         self.b = Epetra.Vector(std_map)
         for volume in self.all_fine_vols_ic - set(self.neigh_wells_d):
             #1
+            gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
             temp_k, temp_glob_adj = self.mount_lines_1(volume, self.map_vols_ic)
             self.trans_fine.InsertGlobalValues(self.map_vols_ic[volume], temp_k, temp_glob_adj)
             if volume in self.wells_n:
@@ -3312,7 +3323,7 @@ class MsClassic_mono:
                 kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 kadj = np.dot(np.dot(kadj,uni),uni)
                 keq = self.kequiv(kvol, kadj)
-                keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                keq = keq*(np.dot(self.A, uni))/float(abs(self.mi*np.dot(direction, uni)))
                 if adj in self.wells_d:
                     #3
                     soma = soma + keq
@@ -3366,7 +3377,7 @@ class MsClassic_mono:
         seta a permeabilidade dos volumes da malha fina
 
         """
-
+        perms = []
         perm_tensor = [1.0, 0.0, 0.0,
                         0.0, 1.0, 0.0,
                         0.0, 0.0, 1.0]
@@ -3374,26 +3385,48 @@ class MsClassic_mono:
         for elem in self.all_fine_vols:
             self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
 
+        # for volume in self.all_fine_vols:
+        #     k = random.randint(1, 100)*(10**(-3))
+        #     perm_tensor = [k, 0, 0,
+        #                    0, k, 0,
+        #                    0, 0, k]
+        #     perms.append(perm_tensor)
+        #     self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)
+
+
         # # permeabilidades em camadas z
         # cont = 0
         # elems = []
+        #
         # for k in range(self.nz):
         #     gids = []
         #     gid1 = np.array([0, 0, k])
         #     gid2 = np.array([self.nx-1, self.ny-1, k])
         #     dif = (gid2 - gid1) + np.array([1, 1, 1])
-        #     k = random.randint(1, 999)*(10**(-3))
-        #     k2 = 0.1*k
+        #     perm = random.randint(1, 999)*(10**(-3))
         #     for l in range(dif[2]):
         #         for m in range(dif[1]):
         #             for n in range(dif[0]):
         #                 gid = gid1 + np.array([n, m, l])
         #                 global_id = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
         #                 elem = self.map_gids_in_elems[global_id]
-        #                 perm_tensor = [k, 0.0, 0.0,
-        #                                 0.0, k, 0.0,
-        #                                 0.0, 0.0, k2]
+        #                 perm_tensor = [perm, 0.0, 0.0,
+        #                                 0.0, perm, 0.0,
+        #                                 0.0, 0.0, perm]
+        #                 perms.append(perm_tensor)
         #                 self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
+        # perms = np.array(perms)
+        # np.savez_compressed('perms', perms = perms)
+
+        # # carregar de um arquivo existente
+        # perms = np.load('perms.npz')['perms']
+        # i = 0
+        # for elem in self.all_fine_vols:
+        #     self.mb.tag_set_data(self.perm_tag, elem, perms[i])
+        #     i += 1
+
+
+
 
     def set_perm_2(self):
         """
@@ -3524,6 +3557,19 @@ class MsClassic_mono:
         with open('Qc.txt', 'w') as arq:
             for i,j in zip(prim, Qc2):
                 arq.write('Primal:{0} ///// Qc: {1}\n'.format(i, j))
+            arq.write('\n')
+            arq.write('sum Qc:{0}'.format(sum(Qc2)))
+
+
+
+    def test_operadores(self):
+        mat = np.load('operadores.npz')
+        OP = mat['OP']
+
+        for i in OP:
+            print(sum(i))
+            import pdb; pdb.set_trace()
+
 
 
     def unitary(self,l):
@@ -3698,7 +3744,7 @@ class MsClassic_mono:
         eliminacao das linhas e colunas dos volumes com pressao prescrita
         """
         #0
-        self.set_contorno()
+        # self.set_contorno()
         lim = 10**(-7)
         t1 = time.time()
         if self.flag_grav == 0:
@@ -3711,6 +3757,10 @@ class MsClassic_mono:
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
         self.organize_Pf()
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
+        self.set_global_problem_vf()
+        self.Pf2 = np.linalg.solve(self.A_np, self.b_np)
+        self.mb.tag_set_data(self.pf2_tag, self.all_fine_vols, np.asarray(self.Pf2))
+
 
         # t2 = time.time()
         # print(' tempo Solucao direta')
@@ -3754,11 +3804,16 @@ class MsClassic_mono:
                 flux_pf = self.store_flux_pf[volume]
                 v1 = np.array([i for i in flux_pms.values()])
                 v2 = np.array([i for i in flux_pf.values()])
+                sum_pms = []
+                sum_pf = []
                 erro = []
                 for i in range(len(v1)):
-                    erro.append(v1[i])
+                    erro.append(v2[i] - v1[i])
+                    sum_pms.append(v1[i])
+                    sum_pf.append(v2[i])
 
-                self.mb.tag_set_data(self.flux_fine_pms_tag, volume, sum(erro))
+                self.mb.tag_set_data(self.flux_fine_pms_tag, volume, sum(sum_pms))
+                self.mb.tag_set_data(self.flux_fine_pf_tag, volume, sum(sum_pf))
 
                 # print('gid: {0}'.format(gid_vol))
                 # print('flux_pms')
@@ -3771,6 +3826,10 @@ class MsClassic_mono:
                 arq.write('gid:{0}\n'.format(gid_vol))
                 arq.write('flux_pms\n')
                 arq.write('{0}\n'.format(flux_pms))
+                arq.write('sum flux pms\n')
+                arq.write('{0}\n'.format(sum(sum_pms)))
+                arq.write('sum flux pf\n')
+                arq.write('{0}\n'.format(sum(sum_pf)))
                 arq.write('flux_pf\n')
                 arq.write('{0}\n'.format(flux_pf))
                 arq.write('erro\n')
@@ -3794,6 +3853,7 @@ class MsClassic_mono:
         # #     pass
         #
         #
+        # self.test_operadores()
         self.erro()
         self.erro_2()
         # #
