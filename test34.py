@@ -1700,7 +1700,7 @@ class MsClassic_mono:
                     volumes_in_interface.append(adj)
                     volumes_in_primal.append(volume)
         #0
-        all_volumes = list(fine_elems_in_primal) + volumes_in_interface
+        volumes_in_primal = list(set(volumes_in_primal))
         if options.get("flag") == 1:
             #1
             return volumes_in_interface, volumes_in_primal
@@ -2487,8 +2487,8 @@ class MsClassic_mono:
             std_map = Epetra.Map(len(all_volumes), 0, self.comm)
             b = Epetra.Vector(std_map)
             A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
-            b_np = np.zeros(dim)
-            A_np = np.zeros((dim, dim))
+            # b_np = np.zeros(dim)
+            # A_np = np.zeros((dim, dim))
             for volume in all_volumes:
                 #2
                 # import pdb; pdb.set_trace()
@@ -2509,7 +2509,7 @@ class MsClassic_mono:
                     temp_k.append(1.0)
                     temp_id.append(map_volumes[volume])
                     b[map_volumes[volume]] = value
-                    b_np[map_volumes[volume]] = value
+                    # b_np[map_volumes[volume]] = value
                 #2
                 elif volume in volumes_in_primal:
                     #3
@@ -2536,7 +2536,7 @@ class MsClassic_mono:
                             #5
                             q_in = (padj - pvol)*(keq)
                             b[map_volumes[volume]] += q_in
-                            b_np[map_volumes[volume]] += q_in
+                            # b_np[map_volumes[volume]] += q_in
                     #3
                     temp_k.append(-sum(temp_k))
                     temp_id.append(map_volumes[volume])
@@ -2546,12 +2546,12 @@ class MsClassic_mono:
                         if volume in self.wells_inj:
                             #5
                             b[map_volumes[volume]] += self.set_q[index]
-                            b_np[map_volumes[volume]] += self.set_q[index]
+                            # b_np[map_volumes[volume]] += self.set_q[index]
                         #4
                         else:
                             #5
                             b[map_volumes[volume]] -= self.set_q[index]
-                            b_np[map_volumes[volume]] -= self.set_q[index]
+                            # b_np[map_volumes[volume]] -= self.set_q[index]
                 #2
                 else:
                     #3
@@ -2562,15 +2562,15 @@ class MsClassic_mono:
                         if volume in self.wells_inj:
                             #5
                             b[map_volumes[volume]] += self.set_q[index]
-                            b_np[map_volumes[volume]] += self.set_q[index]
+                            # b_np[map_volumes[volume]] += self.set_q[index]
                         #4
                         else:
                             #5
                             b[map_volumes[volume]] -= self.set_q[index]
-                            b_np[map_volumes[volume]] -= self.set_q[index]
+                            # b_np[map_volumes[volume]] -= self.set_q[index]
                 #2
                 A.InsertGlobalValues(map_volumes[volume], temp_k, temp_id)
-                A_np[map_volumes[volume], temp_id] = temp_k
+                # A_np[map_volumes[volume], temp_id] = temp_k
                 # print('primal_id')
                 # print(self.ident_primal[primal_id])
                 # print('gid: {0}'.format(gid1))
@@ -2581,7 +2581,7 @@ class MsClassic_mono:
             #1
             A.FillComplete()
             x = self.solve_linear_problem(A, b, dim)
-            x_np = np.linalg.solve(A_np, b_np)
+            # x_np = np.linalg.solve(A_np, b_np)
             # print(x_np)
             for volume in all_volumes:
                 #2
@@ -3377,13 +3377,13 @@ class MsClassic_mono:
         seta a permeabilidade dos volumes da malha fina
 
         """
-        perms = []
-        perm_tensor = [1.0, 0.0, 0.0,
-                        0.0, 1.0, 0.0,
-                        0.0, 0.0, 1.0]
-
-        for elem in self.all_fine_vols:
-            self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
+        # perms = []
+        # perm_tensor = [1.0, 0.0, 0.0,
+        #                 0.0, 1.0, 0.0,
+        #                 0.0, 0.0, 1.0]
+        #
+        # for elem in self.all_fine_vols:
+        #     self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
 
         # for volume in self.all_fine_vols:
         #     k = random.randint(1, 100)*(10**(-3))
@@ -3418,12 +3418,12 @@ class MsClassic_mono:
         # perms = np.array(perms)
         # np.savez_compressed('perms', perms = perms)
 
-        # # carregar de um arquivo existente
-        # perms = np.load('perms.npz')['perms']
-        # i = 0
-        # for elem in self.all_fine_vols:
-        #     self.mb.tag_set_data(self.perm_tag, elem, perms[i])
-        #     i += 1
+        # carregar de um arquivo existente
+        perms = np.load('perms.npz')['perms']
+        i = 0
+        for elem in self.all_fine_vols:
+            self.mb.tag_set_data(self.perm_tag, elem, perms[i])
+            i += 1
 
 
 
@@ -3508,8 +3508,6 @@ class MsClassic_mono:
         utilizando a pressao multiescala para calcular os fluxos na interface dos mesmos
         """
         #0
-        # l1 = [0, 16, 32, 48]
-        # l2 = [15, 31, 47, 63]
         lim = 10**(-6)
         soma = 0
         Qc2 = []
@@ -3517,7 +3515,7 @@ class MsClassic_mono:
         for primal in self.primals:
             #1
             Qc = 0
-            my_adjs = set()
+            # my_adjs = set()
             primal_id1 = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
             primal_id = self.ident_primal[primal_id1]
             fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
@@ -3528,9 +3526,9 @@ class MsClassic_mono:
                 adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
                 for adj in adjs_vol:
                     #3
-                    if adj not in volumes_in_interface or adj in my_adjs:
+                    if adj not in volumes_in_interface:
                         continue
-                    my_adjs.add(adj)
+                    # my_adjs.add(adj)
                     pvol = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
                     padj = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
                     kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
@@ -3568,13 +3566,13 @@ class MsClassic_mono:
 
         for i in OP:
             print(sum(i))
-            import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
 
 
 
     def unitary(self,l):
         """
-        obtem o vetor unitario da direcao de l
+        obtem o vetor unitario positivo da direcao de l
 
         """
         uni = l/np.linalg.norm(l)
