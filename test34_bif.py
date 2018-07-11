@@ -5,6 +5,9 @@ from pymoab import topo_util
 from PyTrilinos import Epetra, AztecOO, EpetraExt  # , Amesos
 import time
 import sys
+import shutil
+import os
+
 
 class Msclassic_bif:
 
@@ -34,7 +37,7 @@ class Msclassic_bif:
             collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
             self.set_of_collocation_points_elems.add(collocation_point)
         #self.ident_primal = remapeamento dos ids globais
-        self.loops = 200 # loops totais
+        self.loops = 5 # loops totais
         self.t = 1000 # tempo total de simulacao
         self.mi_w = 1.0 # viscosidade da agua
         self.mi_o = 1.3 # viscosidade do oleo
@@ -74,6 +77,54 @@ class Msclassic_bif:
         self.map_vols_ic = dict(zip(list(self.all_fine_vols_ic), range(len(self.all_fine_vols_ic)))) # mapeamento dos elementos que sao incognitas
         self.map_vols_ic_2 = dict(zip(range(len(self.all_fine_vols_ic)), list(self.all_fine_vols_ic))) # mapeamento contrario
         self.nf_ic = len(self.all_fine_vols_ic) # numero de icognitas
+        self.principal = '/elliptic'
+        self.caminho1 = '/elliptic/simulacoes/bifasico'
+        self.caminho2 = '/elliptic/simulacoes'
+        self.caminho3 = '/elliptic/backup_simulacoes'
+        self.caminho4 = '/elliptic/backup_simulacoes/bifasico'
+        self.caminho5 = '/elliptic/backup_simulacoes/bifasico/pasta0'
+        arq1 = 'back.txt'
+        if os.path.exists(self.caminho2):
+            if os.path.exists(self.caminho1):
+                shutil.rmtree(self.caminho1)
+                os.makedirs(self.caminho1)
+            else:
+                os.makedirs(self.caminho1)
+        else:
+            os.makedirs(self.caminho1)
+
+        if os.path.exists(self.caminho3):
+            if os.path.exists(self.caminho4):
+                os.chdir(self.caminho4)
+                if arq1 in os.listdir():
+                    with open(arq1, 'r') as arq:
+                        text = arq.readline()
+                        num_sim = int(text) + 1
+                    with open(arq1, 'w') as arq:
+                        arq.write('{0}'.format(num_sim))
+
+                    self.pasta = '/elliptic/backup_simulacoes/bifasico/pasta{0}'.format(num_sim)
+                    os.makedirs(self.pasta)
+
+                else:
+                    with open(arq1, 'w') as arq:
+                        arq.write('{0}'.format(int(0)))
+                    self.pasta = self.caminho5
+            else:
+                os.makedirs(self.caminho5)
+                os.chdir(self.caminho4)
+                with open(arq1, 'w') as arq:
+                    arq.write('{0}'.format(int(0)))
+                self.pasta = self.caminho5
+        else:
+            os.makedirs(self.caminho5)
+            os.chdir(self.caminho4)
+            with open(arq1, 'w') as arq:
+                arq.write('{0}'.format(int(0)))
+            self.pasta = self.caminho5
+
+        os.chdir(self.caminho1)
+
 
     def calculate_local_problem_het(self, elems, lesser_dim_meshsets, support_vals_tag):
         std_map = Epetra.Map(len(elems), 0, self.comm)
@@ -339,13 +390,75 @@ class Msclassic_bif:
 
             self.mb.tag_set_data(self.sat_tag, volume, sat)
 
-    def cfl(self, fi, qmax):
+    def calculate_sat_2(self):
+        """
+        calcula a saturacao do passo de tempo corrente
+        """
+        lim = 10**(-10)
+
+        for volume in self.all_fine_vols:
+            gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+            if volume in self.wells_inj:
+                continue
+            qw = self.mb.tag_get_data(self.flux_w_tag, volume, flat=True)[0]
+            fi = self.mb.tag_get_data(self.fi_tag, volume)[0][0]
+            sat1 = self.mb.tag_get_data(self.sat_tag, volume)[0][0]
+            sat = sat1 + qw*(self.delta_t/(fi*self.V))
+            if sat1 > sat:
+                print('erro na saturacao')
+                import pdb; pdb.set_trace()
+            # print('gid:{0}'.format(gid))
+            # print('sat1:{0}'.format(sat1))
+            # print('sat:{0}'.format(sat))
+            # print('qw:{0}'.format(qw))
+            # print('const:{0}'.format(self.delta_t/(fi*self.V)))
+            # print('res:.{0}'.format(qw*(self.delta_t/(fi*self.V))))
+
+            # import pdb; pdb.set_trace()
+            if sat > 1.0:
+                print('saturacao maior que 1 na funcao calculate_sat')
+                import pdb; pdb.set_trace()
+            #if abs(div) < lim or sat1 == (1 - self.Sor) or sat < sat1:
+            #if abs(div) < lim or sat1 == (1 - self.Sor):
+            elif abs(qw) < lim or sat1 == 0.8:
+                continue
+
+            #elif sat > (1 - self.Sor):
+            elif sat > 0.8:
+                #sat = 1 - self.Sor
+                print("Sat > 0.8")
+                print(sat)
+                print('gid')
+                print(gid)
+                print('\n')
+                import pdb; pdb.set_trace()
+                sat = 0.8
+
+            #elif sat < 0 or sat > (1 - self.Sor):
+            elif sat < 0 or sat > 0.8:
+                print('Erro: saturacao invalida')
+                print('Saturacao: {0}'.format(sat))
+                print('Saturacao anterior: {0}'.format(sat1))
+                print('div: {0}'.format(div))
+                print('gid: {0}'.format(gid))
+                print('fi: {0}'.format(fi))
+                print('V: {0}'.format(self.V))
+                print('delta_t: {0}'.format(self.delta_t))
+                print('loop: {0}'.format(self.loop))
+                import pdb; pdb.set_trace()
+
+
+                sys.exit(0)
+
+            self.mb.tag_set_data(self.sat_tag, volume, sat)
+
+    def cfl(self):
         """
         cfl usando fluxo maximo
         """
-        cfl = 0.9
+        cfl = 0.1
 
-        self.delta_t = cfl*(fi*self.V)/float(qmax)
+        self.delta_t = cfl*(self.fimin*self.V)/float(self.qmax*self.dfdsmax)
 
     def cfl_2(self, vmax, h, dfds):
         """
@@ -354,6 +467,137 @@ class Msclassic_bif:
         cfl = 1.0
 
         self.delta_t = (cfl*h)/float(vmax*dfds)
+
+    def create_flux_vector_pms(self):
+        """
+        cria um vetor para armazenar os fluxos em cada volume da malha fina
+        os fluxos sao armazenados de acordo com a direcao sendo 6 direcoes
+        para cada volume
+        """
+        lim = 10**(-10)
+        self.dfdsmax = 0
+        self.fimin = 10
+        self.qmax = 0
+        self.store_velocity = {}
+        self.store_flux = {}
+        for primal in self.primals:
+            #1
+            primal_id1 = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            primal_id = self.ident_primal[primal_id1]
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            volumes_in_interface, volumes_in_primal = self.get_volumes_in_interfaces(
+            fine_elems_in_primal, primal_id1, flag = 1)
+            for volume in fine_elems_in_primal:
+                #2
+                list_keq3 = []
+                list_gidsadj = []
+                qw3 = []
+                qw = 0
+                flux = {}
+                velocity = {}
+                fi = self.mb.tag_get_data(self.fi_tag, volume, flat=True)[0]
+                if fi < self.fimin:
+                    self.fimin = fi
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                lamb_w_vol = self.mb.tag_get_data(self.lamb_w_tag, volume, flat=True)[0]
+                lamb_o_vol = self.mb.tag_get_data(self.lamb_o_tag, volume, flat=True)[0]
+                fw_vol = self.mb.tag_get_data(self.fw_tag, volume, flat=True)[0]
+                sat_vol = self.mb.tag_get_data(self.sat_tag, volume, flat=True)[0]
+                centroid_volume = self.mesh_topo_util.get_average_position([volume])
+                adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
+                gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+                for adj in adjs_vol:
+                    #3
+                    gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
+                    sat_adj = self.mb.tag_get_data(self.sat_tag, adj, flat=True)[0]
+                    if adj in volumes_in_interface:
+                        #4
+                        pvol = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                        padj = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
+                    #3
+                    else:
+                        #4
+                        pvol = self.mb.tag_get_data(self.pcorr_tag, volume, flat=True)[0]
+                        padj = self.mb.tag_get_data(self.pcorr_tag, adj, flat=True)[0]
+                    #3
+                    kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
+                    centroid_adj = self.mesh_topo_util.get_average_position([adj])
+                    direction = centroid_adj - centroid_volume
+                    unit = direction/np.linalg.norm(direction)
+                    #unit = vetor unitario na direcao de direction
+                    uni = self.unitary(direction)
+                    # uni = valor positivo do vetor unitario
+                    kvol = np.dot(np.dot(kvol,uni),uni)
+                    kadj = np.dot(np.dot(kadj,uni),uni)
+                    lamb_w_adj = self.mb.tag_get_data(self.lamb_w_tag, adj, flat=True)[0]
+                    lamb_o_adj = self.mb.tag_get_data(self.lamb_o_tag, adj, flat=True)[0]
+                    fw_adj = self.mb.tag_get_data(self.fw_tag, adj, flat=True)[0]
+                    kvol = kvol*(lamb_w_vol + lamb_o_vol)
+                    kadj = kadj*(lamb_w_adj + lamb_o_adj)
+                    keq = self.kequiv(kvol, kadj)
+                    keq2 = keq
+                    keq3 = (kvol + kadj)/2.0
+                    keq = keq*(np.dot(self.A, uni))
+                    pvol2 = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
+                    padj2 = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
+                    grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
+                    grad_p2 = (padj2 - pvol2)/float(abs(np.dot(direction, uni)))
+                    q = (grad_p)*keq
+                    if grad_p < 0:
+                        #4
+                        fw = fw_vol
+                        qw += (fw*grad_p*kvol*(np.dot(self.A, uni)))
+                        qw3.append(fw*grad_p*keq3*(np.dot(self.A, uni)))
+                    else:
+                        fw = fw_adj
+                        qw += (fw*grad_p*kadj*(np.dot(self.A, uni)))
+                        qw3.append(fw*grad_p*keq3*(np.dot(self.A, uni)))
+
+                    if gid_adj > gid_vol:
+                        v = -(grad_p2)*keq2
+                    else:
+                        v = (grad_p2)*keq2
+
+                    flux[tuple(unit)] = q
+                    velocity[tuple(unit)] = v
+                    kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
+                    if abs(sat_adj - sat_vol) < lim or abs(fw_adj -fw_vol) < lim:
+                        continue
+                    dfds = abs((fw_adj - fw_vol)/(sat_adj - sat_vol))
+                    # print('aqui')
+                    # print(gid_vol)
+                    # print(gid_adj)
+                    # print(fw_adj - fw_vol)
+                    # print(sat_adj - sat_vol)
+                    # print(dfds)
+                    if dfds > self.dfdsmax:
+                        self.dfdsmax = dfds
+                #2
+                # print(gid_vol)
+                # print(velocity)
+                # print('\n')
+                # import pdb; pdb.set_trace()
+                self.store_velocity[volume] = velocity
+                self.store_flux[volume] = flux
+                qmax = max(list(map(abs, flux.values())))
+                if qmax > self.qmax:
+                    self.qmax = qmax
+                if volume in self.wells_prod:
+                    qw_out = sum(flux.values())*fw_vol
+                    qo_out = sum(flux.values())*(1 - fw_vol)
+                    self.prod_o.append(qo_out)
+                    qw = qw - qw_out
+                if qw < 0 and volume not in self.wells_inj:
+                    print(gid_vol)
+                    import pdb; pdb.set_trace()
+
+                self.mb.tag_set_data(self.flux_w_tag, volume, qw)
+
+                # print(self.dfdsmax)
+                # print(sum(flux.values()))
+                # print(sum(qw))
+                # print(sum(qw3))
+                # print('\n')
 
     def create_tags(self, mb):
 
@@ -416,6 +660,10 @@ class Msclassic_bif:
 
         self.pms2_tag = mb.tag_get_handle(
                         "PMS2", 1, types.MB_TYPE_DOUBLE,
+                        types.MB_TAG_SPARSE, True)
+
+        self.flux_w_tag = mb.tag_get_handle(
+                        "FLUX_W", 1, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
 
         self.p_tag = mb.tag_get_handle(
@@ -876,15 +1124,18 @@ class Msclassic_bif:
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
             Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
-            erro = abs(Pf - Pms)#/float(abs(Pf))
+            erro = abs((Pf - Pms)/float(Pf))
             self.mb.tag_set_data(self.err_tag, volume, erro)
 
     def erro_2(self):
         for volume in self.all_fine_vols:
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
             Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
-            erro = abs(Pf - Pms)#/float(abs(Pf))
-            self.mb.tag_set_data(self.err2_tag, volume, erro)
+            erro_2 = abs(Pf - Pms)#/float(abs(Pf))
+            self.mb.tag_set_data(self.err2_tag, volume, erro_2)
+            erro = 100*abs((Pf - Pms)/float(Pf))
+            self.mb.tag_set_data(self.err_tag, volume, erro)
+
 
     def get_volumes_in_interfaces(self, fine_elems_in_primal, primal_id, **options):
 
@@ -2093,6 +2344,7 @@ class Msclassic_bif:
             lamb_w = krw/self.mi_w
             lamb_o = kro/self.mi_o
             lbt = lamb_w + lamb_o
+            gid = self.mb.tag_get_data(self.global_id_tag, volume)[0][0]
             fw = lamb_w/float(lbt)
             self.mb.tag_set_data(self.lamb_w_tag, volume, lamb_w)
             self.mb.tag_set_data(self.lamb_o_tag, volume, lamb_o)
@@ -2295,6 +2547,10 @@ class Msclassic_bif:
             arq.write('\n')
             arq.write('sum Qc:{0}'.format(sum(Qc2)))
 
+        if sum(Qc2) > lim:
+            print('sum QC: {0}'.format(sum(Qc2)))
+            import pdb; pdb.set_trace()
+
 
     def unitary(self, l):
         """
@@ -2423,6 +2679,7 @@ class Msclassic_bif:
 
     def run_2(self):
         #0
+        self.prod_o = []
         t_ = 0.0
         self.loop = 0
         self.set_sat_in()
@@ -2444,55 +2701,67 @@ class Msclassic_bif:
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
         self.test_conservation_coarse()
         self.Neuman_problem_6()
+        self.create_flux_vector_pms()
         #self.Neuman_problem_4_3()
         #self.erro()
         self.erro_2()
-        #qmax, fi = self.div_max_3(self.pf_tag)
-        #self.cfl(fi, qmax)
+        # qmax, fi = self.div_max_3(self.pf_tag)
+        self.cfl()
         #print('qmax')
         #print(qmax)
         #print('delta_t')
         #print(self.delta_t)
-        vmax, h, dfds = self.vel_max(self.pf_tag)
-        self.cfl_2(vmax, h, dfds)
+        # vmax, h, dfds = self.vel_max(self.pf_tag)
+        # self.cfl_2(vmax, h, dfds)
         print('delta_t: {0}'.format(self.delta_t))
         print('loop: {0}'.format(self.loop))
         print('\n')
 
         self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
+        # arquivo = os.path.join(self.principal, 'new_out_bif{0}.vtk'.format(self.loop))
+        # shutil.copy(arquivo, self.caminho1)
+        # os.unlink(arquivo)
         self.loop = 1
         t_ = t_ + self.delta_t
-        print(t_)
         print('t')
+        print(t_)
 
-        # while t_ <= self.t and self.loop < self.loops:
-        #     #1
-        #     self.calculate_sat()
-        #     self.set_lamb_2()
-        #     #self.set_lamb()
-        #     self.set_global_problem_vf_2()
-        #     self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
-        #     self.organize_Pf()
-        #     self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
-        #     #self.calculate_prolongation_op_het()
-        #     #self.organize_op()
-        #     #self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
-        #     #self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
-        #     #self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
-        #     #self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
-        #     #self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
-        #     #self.organize_Pms()
-        #     #self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
-        #     #self.Neuman_problem_4_3()
-        #     #self.erro()
-        #     #self.erro_2()
-        #     qmax, fi = self.div_max_3(self.pf_tag)
-        #     self.cfl(fi, qmax)
-        #     #vmax, h, dfds = self.vel_max(self.pf_tag)
-        #     #self.cfl_2(vmax, h, dfds)
-        #     print('delta_t: {0}'.format(self.delta_t))
-        #     print('loop: {0}'.format(self.loop))
-        #     print('\n')
-        #     self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
-        #     self.loop += 1
-        #     t_ = t_ + self.delta_t
+        while t_ <= self.t and self.loop < self.loops:
+            #1
+            self.calculate_sat_2()
+            self.set_lamb_2()
+            #self.set_lamb()
+            self.set_global_problem_vf_2()
+            self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
+            self.organize_Pf()
+            self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
+            self.calculate_prolongation_op_het()
+            self.organize_op()
+            self.Tc = self.modificar_matriz(self.pymultimat(self.pymultimat(
+            self.trilOR, self.trans_fine, self.nf_ic), self.trilOP, self.nf_ic), self.nc, self.nc)
+            self.Qc = self.modificar_vetor(self.multimat_vector(self.trilOR, self.nf_ic, self.b), self.nc)
+            self.Pc = self.solve_linear_problem(self.Tc, self.Qc, self.nc)
+            self.Pms = self.multimat_vector(self.trilOP, self.nf_ic, self.Pc)
+            self.organize_Pms()
+            self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
+            self.test_conservation_coarse()
+            self.Neuman_problem_6()
+            self.create_flux_vector_pms()
+            #self.Neuman_problem_4_3()
+            #self.erro()
+            self.erro_2()
+            #qmax, fi = self.div_max_3(self.pf_tag)
+            self.cfl()
+            #vmax, h, dfds = self.vel_max(self.pf_tag)
+            #self.cfl_2(vmax, h, dfds)
+            print('delta_t: {0}'.format(self.delta_t))
+            print('loop: {0}'.format(self.loop))
+            print('\n')
+            self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
+            # arquivo = os.path.join(self.principal, 'new_out_bif{0}.vtk'.format(self.loop))
+            # shutil.copy(arquivo, self.caminho1)
+            # os.unlink(arquivo)
+            self.loop += 1
+            t_ = t_ + self.delta_t
+
+        shutil.copytree(self.caminho1, self.pasta)

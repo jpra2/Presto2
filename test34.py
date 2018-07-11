@@ -1489,9 +1489,9 @@ class MsClassic_mono:
                     # uni = valor positivo do vetor unitario
                     kvol = np.dot(np.dot(kvol,uni),uni)
                     kadj = np.dot(np.dot(kadj,uni),uni)
-                    keq = self.kequiv(kvol, kadj)
-                    keq = keq*(np.dot(self.A, uni))/(self.mi)
-                    keq2 = keq/self.mi
+                    keq = self.kequiv(kvol, kadj)/(self.mi)
+                    keq2 = keq
+                    keq = keq*(np.dot(self.A, uni))
                     pvol2 = self.mb.tag_get_data(self.pms_tag, volume, flat=True)[0]
                     padj2 = self.mb.tag_get_data(self.pms_tag, adj, flat=True)[0]
                     grad_p = (padj - pvol)/float(abs(np.dot(direction, uni)))
