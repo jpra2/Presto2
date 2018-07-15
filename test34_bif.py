@@ -51,8 +51,10 @@ class Msclassic_bif:
         self.Sor = 0.2 # saturacao residual de oleo
         self.nw = 2 # expoente da agua para calculo da permeabilidade relativa
         self.no = 2 # expoente do oleo para calculo da permeabilidade relativa
-        self.set_k() # seta a permeabilidade em cada volume
-        self.set_fi() # seta a porosidade em cada volume
+        self.read_perms_and_phi_spe10()
+        import pdb; pdb.set_trace()
+        #self.set_k() # seta a permeabilidade em cada volume
+        #self.set_fi() # seta a porosidade em cada volume
         self.get_wells() # obtem os gids dos volumes que sao pocos
         self.read_perm_rel() # le o arquivo txt perm_rel.txt
         gids = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols , flat = True)
@@ -84,6 +86,8 @@ class Msclassic_bif:
         self.caminho4 = '/elliptic/backup_simulacoes/bifasico'
         self.caminho5 = '/elliptic/backup_simulacoes/bifasico/pasta0'
         arq1 = 'back.txt'
+        # shutil.rmtree(self.caminho3)
+        # sys.exit(0)
         if os.path.exists(self.caminho2):
             if os.path.exists(self.caminho1):
                 shutil.rmtree(self.caminho1)
@@ -104,20 +108,20 @@ class Msclassic_bif:
                         arq.write('{0}'.format(num_sim))
 
                     self.pasta = '/elliptic/backup_simulacoes/bifasico/pasta{0}'.format(num_sim)
-                    os.makedirs(self.pasta)
+                    # os.makedirs(self.pasta)
 
                 else:
                     with open(arq1, 'w') as arq:
                         arq.write('{0}'.format(int(0)))
                     self.pasta = self.caminho5
             else:
-                os.makedirs(self.caminho5)
+                os.makedirs(self.caminho4)
                 os.chdir(self.caminho4)
                 with open(arq1, 'w') as arq:
                     arq.write('{0}'.format(int(0)))
                 self.pasta = self.caminho5
         else:
-            os.makedirs(self.caminho5)
+            os.makedirs(self.caminho4)
             os.chdir(self.caminho4)
             with open(arq1, 'w') as arq:
                 arq.write('{0}'.format(int(0)))
@@ -1910,6 +1914,82 @@ class Msclassic_bif:
             self.kro_r.append(float(a[1]))
             self.krw_r.append(float(a[2]))
             self.pc_r.append(float(a[3]))
+
+    def read_perms_and_phi_spe10(self):
+        nx = 60
+        ny = 220
+        nz = 85
+        N = nx*ny*nz
+        # l1 = [N, 2*N, 3*N]
+        # l2 = [0, 1, 2]
+        #
+        #
+        # ks = np.loadtxt('spe_perm.dat')
+        # t1, t2 = ks.shape
+        # ks = ks.reshape((t1*t2))
+        # ks2 = np.zeros((N, 9))
+        #
+        #
+        # for i in range(0, N):
+        #     # as unidades do spe_10 estao em milidarcy
+        #     # unidade de darcy em metro quadrado =  (1 Darcy)*(9.869233e-13)
+        #     # fonte -- http://www.calculator.org/property.aspx?name=permeability
+        #     ks2[i, 0] = ks[i]*(10**(-3))# *9.869233e-13
+        #
+        # cont = 0
+        # for i in range(N+1, 2*N):
+        #     ks2[cont, 4] = ks[i]*(10**(-3))# *9.869233e-13
+        #     cont += 1
+        #
+        # cont = 0
+        # for i in range(2*N+1, 3*N):
+        #     ks2[cont, 8] = ks[i]*(10**(-3))# *9.869233e-13
+        #     cont += 1
+        #
+        # cont = None
+        # phi = np.loadtxt('spe_phi.dat')
+        # np.savez_compressed('spe10_perms_and_phi', perms = ks2, phi = phi)
+        # ks2 = None
+
+        # obter a permeabilidade de uma regiao
+        # digitar o inicio e o fim da regiao
+
+        ks = np.load('spe10_perms_and_phi.npz')['perms']
+        phi = np.load('spe10_perms_and_phi.npz')['phi']
+        t1, t2 = phi.shape
+        phi = phi.reshape(t1*t2)
+
+        gid1 = [0, 0, 0]
+        gid2 = [self.nx-1, self.ny-1, self.nz-1]
+
+        gid1 = np.array(gid1)
+        gid2 = np.array(gid2)
+
+        dif = gid2 - gid1 + np.array([1, 1, 1])
+        permeabilidade = []
+        fi = []
+
+        cont = 0
+        for k in range(dif[2]):
+            for j in range(dif[1]):
+                for i in range(dif[0]):
+                    gid = gid1 + np.array([i, j, k])
+                    gid = gid[0] + gid[1]*nx + gid[2]*nx*ny
+                    # permeabilidade[cont] = ks[gid]
+                    permeabilidade.append(ks[gid])
+                    fi.append(phi[gid])
+                    cont += 1
+        cont = 0
+
+        self.mb.tag_set_data(self.perm_tag, self.all_fine_vols, permeabilidade)
+        self.mb.tag_set_data(self.fi_tag, self.all_fine_vols, fi)
+        for volume in self.all_fine_vols:
+            perm = self.mb.tag_get_data(self.perm_tag, volume).reshape([3,3])
+            fi = self.mb.tag_get_data(self.fi_tag, volume, flat = True)[0]
+            print(perm)
+            print(fi)
+            import pdb; pdb.set_trace()
+
 
     def read_structured(self):
         with open('structured.cfg', 'r') as arq:
