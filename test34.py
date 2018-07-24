@@ -1422,11 +1422,11 @@ class MsClassic_mono:
             centroid_volume = self.mesh_topo_util.get_average_position([volume])
             adjs_vol = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
             gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-            pvol = self.mb.tag_get_data(self.pf2_tag, volume, flat=True)[0]
+            pvol = self.mb.tag_get_data(self.pf_tag, volume, flat=True)[0]
             for adj in adjs_vol:
                 #2
                 gid_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
-                padj = self.mb.tag_get_data(self.pf2_tag, adj, flat=True)[0]
+                padj = self.mb.tag_get_data(self.pf_tag, adj, flat=True)[0]
                 kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 centroid_adj = self.mesh_topo_util.get_average_position([adj])
                 direction = centroid_adj - centroid_volume
@@ -3284,6 +3284,9 @@ class MsClassic_mono:
         transmissibilidade da malha fina excluindo os volumes com pressao prescrita
         obs: com funcao para obter dados dos elementos
         """
+        unitario = lambda l: (l/np.linalg.norm(l)*(l/np.linalg.norm(l)))
+
+
         #0
         std_map = Epetra.Map(len(self.all_fine_vols_ic),0,self.comm)
         self.trans_fine = Epetra.CrsMatrix(Epetra.Copy, std_map, 7)
@@ -3318,7 +3321,8 @@ class MsClassic_mono:
                 global_adj = self.mb.tag_get_data(self.global_id_tag, adj, flat=True)[0]
                 adj_centroid = self.mesh_topo_util.get_average_position([adj])
                 direction = adj_centroid - volume_centroid
-                uni = self.unitary(direction)
+                # uni = self.unitary(direction)
+                uni = unitario(direction)
                 kvol = np.dot(np.dot(kvol,uni),uni)
                 kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 kadj = np.dot(np.dot(kadj,uni),uni)
@@ -3378,12 +3382,12 @@ class MsClassic_mono:
 
         """
         # perms = []
-        # perm_tensor = [1.0, 0.0, 0.0,
-        #                 0.0, 1.0, 0.0,
-        #                 0.0, 0.0, 1.0]
-        #
-        # for elem in self.all_fine_vols:
-        #     self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
+        perm_tensor = [1.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                        0.0, 0.0, 1.0]
+
+        for elem in self.all_fine_vols:
+            self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
 
         # for volume in self.all_fine_vols:
         #     k = random.randint(1, 100)*(10**(-3))
@@ -3419,11 +3423,11 @@ class MsClassic_mono:
         # np.savez_compressed('perms', perms = perms)
 
         # carregar de um arquivo existente
-        perms = np.load('perms.npz')['perms']
-        i = 0
-        for elem in self.all_fine_vols:
-            self.mb.tag_set_data(self.perm_tag, elem, perms[i])
-            i += 1
+        # perms = np.load('perms.npz')['perms']
+        # i = 0
+        # for elem in self.all_fine_vols:
+        #     self.mb.tag_set_data(self.perm_tag, elem, perms[i])
+        #     i += 1
 
 
 
@@ -3751,26 +3755,31 @@ class MsClassic_mono:
             # self.set_global_problem_gr_vf_3()
             print('erro ____ sem gravidade')
             sys.exit(0)
+        t10 = time.time()
         # #self.set_global_problem_gr_vf_2()
-        self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
-        self.organize_Pf()
-        self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
-        self.set_global_problem_vf()
-        self.Pf2 = np.linalg.solve(self.A_np, self.b_np)
-        self.mb.tag_set_data(self.pf2_tag, self.all_fine_vols, np.asarray(self.Pf2))
+        # self.Pf = self.solve_linear_problem(self.trans_fine, self.b, len(self.all_fine_vols_ic))
+        # self.organize_Pf()
+        # self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
+        t2 = time.time()
+        # self.set_global_problem_vf()
+        # self.Pf2 = np.linalg.solve(self.A_np, self.b_np)
+        # self.mb.tag_set_data(self.pf2_tag, self.all_fine_vols, np.asarray(self.Pf2))
 
 
+        print('tempo solucao direta')
+        print(t2 - t1)
         # t2 = time.time()
         # print(' tempo Solucao direta')
         # print(t2-t1)
         # print('\n')
 
+        t3 = time.time()
         if self.atualizar == 1:
 
             self.calculate_restriction_op_2()
             self.calculate_prolongation_op_het()
             self.organize_op()
-            self.save_ops()
+            #self.save_ops()
 
         else:
             self.load_ops()
@@ -3788,52 +3797,56 @@ class MsClassic_mono:
         self.test_conservation_coarse()
         self.Neuman_problem_6()
         self.create_flux_vector_pms()
-        t3 = time.time()
+        t4 = time.time()
         # print(' tempo Solucao Multiescala')
         # print(t3-t2)
         # print('\n')
-        self.create_flux_vector_pf()
+        # self.create_flux_vector_pf()
 
-        with open('comparacao_de_fluxos.txt', 'w') as arq:
+        print('tempo solucao multiescala')
+        print(t4-t3 + t10-t1)
 
-            for volume in self.all_fine_vols:
-                gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-                flux_pms = self.store_flux[volume]
-                flux_pf = self.store_flux_pf[volume]
-                v1 = np.array([i for i in flux_pms.values()])
-                v2 = np.array([i for i in flux_pf.values()])
-                sum_pms = []
-                sum_pf = []
-                erro = []
-                for i in range(len(v1)):
-                    erro.append(v2[i] - v1[i])
-                    sum_pms.append(v1[i])
-                    sum_pf.append(v2[i])
+        # with open('comparacao_de_fluxos.txt', 'w') as arq:
+        #
+        #     for volume in self.all_fine_vols:
+        #         gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+        #         flux_pms = self.store_flux[volume]
+        #         flux_pf = self.store_flux_pf[volume]
+        #         v1 = np.array([i for i in flux_pms.values()])
+        #         v2 = np.array([i for i in flux_pf.values()])
+        #         sum_pms = []
+        #         sum_pf = []
+        #         erro = []
+        #         for i in range(len(v1)):
+        #             erro.append(v2[i] - v1[i])
+        #             sum_pms.append(v1[i])
+        #             sum_pf.append(v2[i])
+        #
+        #         self.mb.tag_set_data(self.flux_fine_pms_tag, volume, sum(sum_pms))
+        #         self.mb.tag_set_data(self.flux_fine_pf_tag, volume, sum(sum_pf))
+        #
+        #         # print('gid: {0}'.format(gid_vol))
+        #         # print('flux_pms')
+        #         # print(flux_pms)
+        #         # print('flux_pf')
+        #         # print(flux_pf)
+        #         # print('erro')
+        #         # print(erro)
+        #         # print('\n')
+        #         arq.write('gid:{0}\n'.format(gid_vol))
+        #         arq.write('flux_pms\n')
+        #         arq.write('{0}\n'.format(flux_pms))
+        #         arq.write('sum flux pms\n')
+        #         arq.write('{0}\n'.format(sum(sum_pms)))
+        #         arq.write('sum flux pf\n')
+        #         arq.write('{0}\n'.format(sum(sum_pf)))
+        #         arq.write('flux_pf\n')
+        #         arq.write('{0}\n'.format(flux_pf))
+        #         arq.write('erro\n')
+        #         arq.write('{0}\n'.format(erro))
+        #         arq.write('\n')
+        #         arq.write('\n')
 
-                self.mb.tag_set_data(self.flux_fine_pms_tag, volume, sum(sum_pms))
-                self.mb.tag_set_data(self.flux_fine_pf_tag, volume, sum(sum_pf))
-
-                # print('gid: {0}'.format(gid_vol))
-                # print('flux_pms')
-                # print(flux_pms)
-                # print('flux_pf')
-                # print(flux_pf)
-                # print('erro')
-                # print(erro)
-                # print('\n')
-                arq.write('gid:{0}\n'.format(gid_vol))
-                arq.write('flux_pms\n')
-                arq.write('{0}\n'.format(flux_pms))
-                arq.write('sum flux pms\n')
-                arq.write('{0}\n'.format(sum(sum_pms)))
-                arq.write('sum flux pf\n')
-                arq.write('{0}\n'.format(sum(sum_pf)))
-                arq.write('flux_pf\n')
-                arq.write('{0}\n'.format(flux_pf))
-                arq.write('erro\n')
-                arq.write('{0}\n'.format(erro))
-                arq.write('\n')
-                arq.write('\n')
 
         # self.corretion_func()
 
@@ -3852,8 +3865,8 @@ class MsClassic_mono:
         #
         #
         # self.test_operadores()
-        self.erro()
-        self.erro_2()
+        # self.erro()
+        # self.erro_2()
         # #
         # # # self.erro_3()
         # # self.corretion_func()
@@ -3973,12 +3986,15 @@ class MsClassic_mono:
         """
         t1 = time.time()
         self.set_global_problem_vf()
+        t2 = time.time()
         self.Pf = self.solve_linear_problem(self.trans_fine, self.b, self.nf)
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
+        t3 = time.time()
+
 
         print('\n')
 
-        t2 = time.time()
+
         # Solucao Multiescala
         self.calculate_prolongation_op_het()
         self.modificando_op()
@@ -3994,11 +4010,13 @@ class MsClassic_mono:
         # self.calculate_p_end()
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms))
 
-        t3 = time.time()
+        t4 = time.time()
 
         print('tempo Solucao Multiescala')
-        print(t3-t2)
+        print((t4-t3) + (t2-t1))
         print('\n')
+        print('tempo solucao direta')
+        print(t2 - t1)
 
         # self.test_conservation_coarse()
 

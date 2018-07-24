@@ -4,6 +4,13 @@
 *.msh
 *.geo
 
+*.npy
+*.npz
+*.zip
+*.dat
+*.cprof
+*.ipynb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -93,8 +100,3 @@ ENV/
 
 # Rope project settings
 .ropeproject
-
-.npy
-.npz
-.zip
-.dat
