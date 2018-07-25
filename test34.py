@@ -59,6 +59,8 @@ class MsClassic_mono:
         self.nc = len(self.primals)
         self.map_all_fine_vols = dict(zip(self.all_fine_vols, gids))
 
+        # self.set_volumes_in_interface()
+
 
         if ind == False:
             self.map_all_fine_vols = dict(zip(self.all_fine_vols, gids))
@@ -87,6 +89,11 @@ class MsClassic_mono:
             self.nf_ic = len(self.all_fine_vols_ic)
 
             self.run_2()
+
+
+    funcoes = [lambda x: (x/np.linalg.norm(x))*(x/np.linalg.norm(x)), # unitario positivo na direcao de x
+               lambda k1, k2: (2*k1*k2)/(k1+k2) # retorna a permeabilidade equivalente
+               ]
 
     def add_gr(self):
 
@@ -1603,6 +1610,14 @@ class MsClassic_mono:
                         "PERM", 9, types.MB_TYPE_DOUBLE,
                         types.MB_TAG_SPARSE, True)
 
+        self.volumes_in_primal_tag = mb.tag_get_handle(
+            "VOLUMES_IN_PRIMAL", 1, types.MB_TYPE_HANDLE,
+            types.MB_TAG_MESH, True)
+
+        self.volumes_in_interface_tag = mb.tag_get_handle(
+            "VOLUMES_IN_INTERFACE", 1, types.MB_TYPE_HANDLE,
+            types.MB_TAG_MESH, True)
+
         self.global_id_tag = mb.tag_get_handle("GLOBAL_ID")
 
         self.collocation_point_tag = mb.tag_get_handle("COLLOCATION_POINT")
@@ -1610,7 +1625,6 @@ class MsClassic_mono:
         self.elem_primal_id_tag = mb.tag_get_handle(
             "FINE_PRIMAL_ID", 1, types.MB_TYPE_INTEGER, True,
             types.MB_TAG_SPARSE)
-
 
         self.atualizar_tag = mb.tag_get_handle("ATUALIZAR")
         self.primal_id_tag = mb.tag_get_handle("PRIMAL_ID")
@@ -1949,7 +1963,8 @@ class MsClassic_mono:
             # adj_centroid = self.mb.tag_get_data(self.centroid_tag, adj, flat=True)
             adj_centroid = self.mesh_topo_util.get_average_position([adj])
             direction = adj_centroid - volume_centroid
-            uni = self.unitary(direction)
+            # uni = self.unitary(direction)
+            uni = self.funcoes[0](direction)
             kvol = np.dot(np.dot(kvol,uni),uni)
             kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
             kadj = np.dot(np.dot(kadj,uni),uni)
@@ -1986,11 +2001,13 @@ class MsClassic_mono:
                 # adj_centroid = self.mb.tag_get_data(self.centroid_tag, adj, flat=True)
                 adj_centroid = self.mesh_topo_util.get_average_position([adj])
                 direction = adj_centroid - volume_centroid
-                uni = self.unitary(direction)
+                # uni = self.unitary(direction)
+                uni = self.funcoes[0](direction)
                 kvol = np.dot(np.dot(kvol,uni),uni)
                 kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 kadj = np.dot(np.dot(kadj,uni),uni)
                 keq = self.kequiv(kvol, kadj)
+                # keq = self.funcoes[1](kvol, kadj)
                 keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
                 temp_ids.append(map_id[adj])
                 temp_k.append(-keq)
@@ -3284,8 +3301,6 @@ class MsClassic_mono:
         transmissibilidade da malha fina excluindo os volumes com pressao prescrita
         obs: com funcao para obter dados dos elementos
         """
-        unitario = lambda l: (l/np.linalg.norm(l)*(l/np.linalg.norm(l)))
-
 
         #0
         std_map = Epetra.Map(len(self.all_fine_vols_ic),0,self.comm)
@@ -3322,7 +3337,7 @@ class MsClassic_mono:
                 adj_centroid = self.mesh_topo_util.get_average_position([adj])
                 direction = adj_centroid - volume_centroid
                 # uni = self.unitary(direction)
-                uni = unitario(direction)
+                uni = self.funcoes[0](direction)
                 kvol = np.dot(np.dot(kvol,uni),uni)
                 kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 kadj = np.dot(np.dot(kadj,uni),uni)
@@ -3381,7 +3396,7 @@ class MsClassic_mono:
         seta a permeabilidade dos volumes da malha fina
 
         """
-        # perms = []
+        perms = []
         perm_tensor = [1.0, 0.0, 0.0,
                         0.0, 1.0, 0.0,
                         0.0, 0.0, 1.0]
@@ -3493,6 +3508,42 @@ class MsClassic_mono:
         #     else:
         #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
 
+    def set_volumes_in_interface(self):
+        for primal in self.primals:
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            volumes_in_interface, volumes_in_primal = self.get_volumes_in_interfaces(
+            fine_elems_in_primal, primal_id, flag = 1)
+            volumes_in_interface_set = self.mb.create_meshset()
+            volumes_in_primal_set = self.mb.create_meshset()
+            self.mb.add_entities(volumes_in_interface_set, volumes_in_interface)
+            self.mb.add_entities(volumes_in_primal_set, volumes_in_primal)
+            self.mb.add_child_meshset(volumes_in_primal_set, volumes_in_interface_set)
+            self.mb.add_child_meshset(primal, volumes_in_primal_set)
+
+
+        for primal in self.primals:
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, primal, flat=True)[0]
+            fine_elems_in_primal = self.mb.get_entities_by_handle(primal)
+            gids = self.mb.tag_get_data(self.global_id_tag, fine_elems_in_primal, flat=True)
+            v1 = self.mb.get_child_meshsets(primal)
+            import pdb; pdb.set_trace()
+            volumes_in_primal = self.mb.get_entities_by_handle(v1)
+            v2 = self.mb.get_child_meshsets(v1)
+            volumes_in_interface = self.mb.get_entities_by_handle(v2)
+            gids_in_primal = self.mb.tag_get_data(self.global_id_tag, volumes_in_primal, flat=True)
+            gids_in_interface = self.mb.tag_get_data(self.global_id_tag, volumes_in_interface, flat=True)
+            print(gids)
+            print(gids_in_primal)
+            print(gids_in_interface)
+            import pdb; pdb.set_trace()
+
+
+
+
+
+
+
     def solve_linear_problem(self, A, b, n):
 
         std_map = Epetra.Map(n, 0, self.comm)
@@ -3511,6 +3562,7 @@ class MsClassic_mono:
         verifica se o fluxo é conservativo nos volumes da malha grossa
         utilizando a pressao multiescala para calcular os fluxos na interface dos mesmos
         """
+
         #0
         lim = 10**(-6)
         soma = 0

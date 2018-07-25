@@ -7,6 +7,7 @@ import time
 import sys
 import shutil
 import os
+import random
 
 
 class Msclassic_bif:
@@ -37,7 +38,7 @@ class Msclassic_bif:
             collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
             self.set_of_collocation_points_elems.add(collocation_point)
         #self.ident_primal = remapeamento dos ids globais
-        self.loops = 5 # loops totais
+        self.loops = 200 # loops totais
         self.t = 1000 # tempo total de simulacao
         self.mi_w = 1.0 # viscosidade da agua
         self.mi_o = 1.3 # viscosidade do oleo
@@ -51,10 +52,9 @@ class Msclassic_bif:
         self.Sor = 0.2 # saturacao residual de oleo
         self.nw = 2 # expoente da agua para calculo da permeabilidade relativa
         self.no = 2 # expoente do oleo para calculo da permeabilidade relativa
-        self.read_perms_and_phi_spe10()
-        import pdb; pdb.set_trace()
-        #self.set_k() # seta a permeabilidade em cada volume
-        #self.set_fi() # seta a porosidade em cada volume
+        # self.read_perms_and_phi_spe10()
+        self.set_k() # seta a permeabilidade em cada volume
+        self.set_fi() # seta a porosidade em cada volume
         self.get_wells() # obtem os gids dos volumes que sao pocos
         self.read_perm_rel() # le o arquivo txt perm_rel.txt
         gids = self.mb.tag_get_data(self.global_id_tag, self.all_fine_vols , flat = True)
@@ -1616,8 +1616,8 @@ class Msclassic_bif:
             std_map = Epetra.Map(len(all_volumes), 0, self.comm)
             b = Epetra.Vector(std_map)
             A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
-            b_np = np.zeros(dim)
-            A_np = np.zeros((dim, dim))
+            # b_np = np.zeros(dim)
+            # A_np = np.zeros((dim, dim))
             for volume in all_volumes:
                 #2
                 # import pdb; pdb.set_trace()
@@ -1641,7 +1641,7 @@ class Msclassic_bif:
                     temp_k.append(1.0)
                     temp_id.append(map_volumes[volume])
                     b[map_volumes[volume]] = value
-                    b_np[map_volumes[volume]] = value
+                    #b_np[map_volumes[volume]] = value
                 #2
                 elif volume in volumes_in_primal:
                     #3
@@ -1678,7 +1678,7 @@ class Msclassic_bif:
                             # print('keq: {0}\n'.format(keq))
                             # import pdb; pdb.set_trace()
                             b[map_volumes[volume]] += q_in
-                            b_np[map_volumes[volume]] += q_in
+                            #b_np[map_volumes[volume]] += q_in
                     #3
                     temp_k.append(-sum(temp_k))
                     temp_id.append(map_volumes[volume])
@@ -1688,12 +1688,12 @@ class Msclassic_bif:
                         if volume in self.wells_inj:
                             #5
                             b[map_volumes[volume]] += self.set_q[index]
-                            b_np[map_volumes[volume]] += self.set_q[index]
+                            #b_np[map_volumes[volume]] += self.set_q[index]
                         #4
                         else:
                             #5
                             b[map_volumes[volume]] -= self.set_q[index]
-                            b_np[map_volumes[volume]] -= self.set_q[index]
+                            #b_np[map_volumes[volume]] -= self.set_q[index]
                 #2
                 else:
                     #3
@@ -1704,15 +1704,15 @@ class Msclassic_bif:
                         if volume in self.wells_inj:
                             #5
                             b[map_volumes[volume]] += self.set_q[index]
-                            b_np[map_volumes[volume]] += self.set_q[index]
+                            #b_np[map_volumes[volume]] += self.set_q[index]
                         #4
                         else:
                             #5
                             b[map_volumes[volume]] -= self.set_q[index]
-                            b_np[map_volumes[volume]] -= self.set_q[index]
+                            #b_np[map_volumes[volume]] -= self.set_q[index]
                 #2
                 A.InsertGlobalValues(map_volumes[volume], temp_k, temp_id)
-                A_np[map_volumes[volume], temp_id] = temp_k
+                #A_np[map_volumes[volume], temp_id] = temp_k
                 # print('primal_id')
                 # print(self.ident_primal[primal_id])
                 # print('gid: {0}'.format(gid1))
@@ -1723,13 +1723,13 @@ class Msclassic_bif:
             #1
             A.FillComplete()
             x = self.solve_linear_problem(A, b, dim)
-            x_np = np.linalg.solve(A_np, b_np)
+            #x_np = np.linalg.solve(A_np, b_np)
             # print(x_np)
             for volume in all_volumes:
                 #2
                 gid1 = self.mb.tag_get_data(self.global_id_tag, volume)[0][0]
                 self.mb.tag_set_data(self.pcorr_tag, volume, x[map_volumes[volume]])
-                self.mb.tag_set_data(self.pms2_tag, volume, x_np[map_volumes[volume]])
+                #self.mb.tag_set_data(self.pms2_tag, volume, x_np[map_volumes[volume]])
 
     def organize_op(self):
         """
@@ -1959,8 +1959,8 @@ class Msclassic_bif:
         t1, t2 = phi.shape
         phi = phi.reshape(t1*t2)
 
-        gid1 = [0, 0, 0]
-        gid2 = [self.nx-1, self.ny-1, self.nz-1]
+        gid1 = [0, 0, 50]
+        gid2 = [gid1[0] + self.nx-1, gid1[1] + self.ny-1, gid1[2] + self.nz-1]
 
         gid1 = np.array(gid1)
         gid2 = np.array(gid2)
@@ -1981,14 +1981,19 @@ class Msclassic_bif:
                     cont += 1
         cont = 0
 
-        self.mb.tag_set_data(self.perm_tag, self.all_fine_vols, permeabilidade)
-        self.mb.tag_set_data(self.fi_tag, self.all_fine_vols, fi)
         for volume in self.all_fine_vols:
+            self.mb.tag_set_data(self.perm_tag, volume, permeabilidade[cont])
+            self.mb.tag_set_data(self.fi_tag, volume, fi[cont])
+            cont += 1
+
+
+
+        # self.mb.tag_set_data(self.perm_tag, self.all_fine_vols, permeabilidade)
+        # self.mb.tag_set_data(self.fi_tag, self.all_fine_vols, fi)
+        for volume in self.all_fine_vols:
+            gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)
             perm = self.mb.tag_get_data(self.perm_tag, volume).reshape([3,3])
-            fi = self.mb.tag_get_data(self.fi_tag, volume, flat = True)[0]
-            print(perm)
-            print(fi)
-            import pdb; pdb.set_trace()
+            fi2 = self.mb.tag_get_data(self.fi_tag, volume, flat = True)[0]
 
 
     def read_structured(self):
@@ -2393,12 +2398,34 @@ class Msclassic_bif:
         seta as permeabilidades dos volumes
         """
 
-        perm_tensor = [1, 0.0, 0.0,
-                        0.0, 1, 0.0,
-                        0.0, 0.0, 1]
+        # perm_tensor = [1, 0.0, 0.0,
+        #                 0.0, 1, 0.0,
+        #                 0.0, 0.0, 1]
+        #
+        # for volume in self.all_fine_vols:
+        #     self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)
 
+        # perm = []
+        # for volume in self.all_fine_vols:
+        #     k = random.randint(1, 1001)*(10**(-3))
+        #     perm_tensor = [k, 0, 0,
+        #                    0, k, 0,
+        #                    0, 0, k]
+        #     perm.append(np.array(perm_tensor))
+        #     self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)
+        #
+        # perm = np.array(perm)
+        #
+        # np.savez_compressed('perms2', perm = perm)
+
+        perm = np.load('perms2.npz')['perm']
+
+        cont = 0
         for volume in self.all_fine_vols:
-            self.mb.tag_set_data(self.perm_tag, volume, perm_tensor)
+            self.mb.tag_set_data(self.perm_tag, volume, perm[cont])
+            cont += 1
+        cont = 0
+
 
     def set_lamb(self):
         """
@@ -2843,5 +2870,9 @@ class Msclassic_bif:
             # os.unlink(arquivo)
             self.loop += 1
             t_ = t_ + self.delta_t
+
+        with open('prod.txt', 'w') as arq:
+            for i in self.prod_o:
+                arq.write('{0}\n'.format(i))
 
         shutil.copytree(self.caminho1, self.pasta)
