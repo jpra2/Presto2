@@ -10,6 +10,11 @@
 *.dat
 *.cprof
 *.ipynb
+*.png
+*.txt
+!dados_reais.txt
+/backup_simulacoes/
+/simulacoes/
 
 
 # Byte-compiled / optimized / DLL files

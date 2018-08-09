@@ -1,7 +1,9 @@
 porosidade: 0.3
 permeabilidade: 8*10^-13 m^2
-densidade do fluido: 1000kg/m^3
-viscosidade: 1.42*10^-2 Pa*s
+densidade do fluido molhante: 1000kg/m^3
+densidade do fluido nao molhante: 850kg/m^3
+viscosidade da água: 1.43*10^-3 Pa*s
+viscosidade do óleo: 1.43*10^-2 Pa*s
 raio do poço: 0.05 m
-pressao de injecao: 1*10^7
-pressao de producao: 1*10^3
+pressao de injecao: 1*10^7 Pa
+pressao de producao: 1*10^3 Pa
