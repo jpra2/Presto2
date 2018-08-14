@@ -1739,12 +1739,15 @@ class MsClassic_mono:
             if volume in self.wells_d:
                 erro = 0.0
                 self.mb.tag_set_data(self.err_tag, volume, erro)
+                self.mb.tag_set_data(self.err2_tag, volume, erro)
                 continue
 
             Pf = self.mb.tag_get_data(self.pf_tag, volume, flat = True)[0]
             Pms = self.mb.tag_get_data(self.pms_tag, volume, flat = True)[0]
             erro = 100*(abs((Pf - Pms)/float(Pf)))
             self.mb.tag_set_data(self.err_tag, volume, erro)
+            erro2 = abs(Pf-Pms)
+            self.mb.tag_set_data(self.err2_tag, volume, erro2)
 
     def erro_2(self):
         for volume in self.all_fine_vols:
@@ -2841,8 +2844,6 @@ class MsClassic_mono:
 
         ks = np.load('spe10_perms_and_phi.npz')['perms']
         phi = np.load('spe10_perms_and_phi.npz')['phi']
-        t1, t2 = phi.shape
-        phi = phi.reshape(t1*t2)
 
         # gid1 = [0, 0, 50]
         gid1 = [0, 0, 0]
@@ -2864,14 +2865,13 @@ class MsClassic_mono:
                     # permeabilidade[cont] = ks[gid]
                     permeabilidade.append(ks[gid])
                     fi.append(phi[gid])
-                    cont += 1
+
         cont = 0
 
         for volume in self.all_fine_vols:
             self.mb.tag_set_data(self.perm_tag, volume, permeabilidade[cont])
             self.mb.tag_set_data(self.fi_tag, volume, fi[cont])
             cont += 1
-
 
 
         # self.mb.tag_set_data(self.perm_tag, self.all_fine_vols, permeabilidade)
@@ -3582,12 +3582,12 @@ class MsClassic_mono:
         seta a permeabilidade dos volumes da malha fina
         """
         perms = []
-        # perm_tensor = [1.0, 0.0, 0.0,
-        #                 0.0, 1.0, 0.0,
-        #                 0.0, 0.0, 1.0]
-        #
-        # for elem in self.all_fine_vols:
-        #     self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
+        perm_tensor = [1.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                        0.0, 0.0, 1.0]
+
+        for elem in self.all_fine_vols:
+            self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
 
         # perm_tensor = [10.0,  0.0, 0.0,
         #                 0.0, 10.0, 0.0,
@@ -3645,39 +3645,39 @@ class MsClassic_mono:
         # cont = 0
         # elems = []
         #
-        val = int(self.nx/2.0)
-        gid1 = np.array([0, 0, 0])
-        gid2 = np.array([val, self.ny-1, self.nz-1])
-        dif =  gid2 - gid1 + np.array([1, 1, 1])
-        gids = []
-        for k in range(dif[2]):
-            for j in range(dif[1]):
-                for i in range(dif[0]):
-                    gid = gid1 + np.array([i, j, k])
-                    gid = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
-                    gids.append(gid)
-
-
-        perm_tensor_1 = [1.0, 0.0, 0.0,
-                        0.0, 1.0, 0.0,
-                        0.0, 0.0, 1.0]
-
-        perm_tensor_2 = [0.5, 0.0, 0.0,
-                         0.0, 0.5, 0.0,
-                         0.0, 0.0, 0.5]
-
-
-        k1 = 1.0
-        k2 = 0.5
-
-        for volume in self.all_fine_vols:
-            gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
-            if gid in gids:
-                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
-                self.mb.tag_set_data(self.k_tag, volume, k1)
-            else:
-                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
-                self.mb.tag_set_data(self.k_tag, volume, k2)
+        # val = int(self.nx/2.0)
+        # gid1 = np.array([0, 0, 0])
+        # gid2 = np.array([val, self.ny-1, self.nz-1])
+        # dif =  gid2 - gid1 + np.array([1, 1, 1])
+        # gids = []
+        # for k in range(dif[2]):
+        #     for j in range(dif[1]):
+        #         for i in range(dif[0]):
+        #             gid = gid1 + np.array([i, j, k])
+        #             gid = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
+        #             gids.append(gid)
+        #
+        #
+        # perm_tensor_1 = [1.0, 0.0, 0.0,
+        #                 0.0, 1.0, 0.0,
+        #                 0.0, 0.0, 1.0]
+        #
+        # perm_tensor_2 = [0.5, 0.0, 0.0,
+        #                  0.0, 0.5, 0.0,
+        #                  0.0, 0.0, 0.5]
+        #
+        #
+        # k1 = 1.0
+        # k2 = 0.5
+        #
+        # for volume in self.all_fine_vols:
+        #     gid = self.mb.tag_get_data(self.global_id_tag, volume, flat=True)[0]
+        #     if gid in gids:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
+        #         self.mb.tag_set_data(self.k_tag, volume, k1)
+        #     else:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+        #         self.mb.tag_set_data(self.k_tag, volume, k2)
 
 
 
@@ -3721,19 +3721,19 @@ class MsClassic_mono:
         perm_tensor_1 = [1.0, 0.0, 0.0,
                         0.0, 1.0, 0.0,
                         0.0, 0.0, 1.0]
-
-        perm_tensor_2 = [0.5, 0.0, 0.0,
-                        0.0, 0.5, 0.0,
-                        0.0, 0.0, 0.5]
-
-        gid_lim = 323
-
-        for volume in self.all_fine_vols:
-            global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
-            if global_volume <= gid_lim:
-                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
-            else:
-                self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+        #
+        # perm_tensor_2 = [0.5, 0.0, 0.0,
+        #                 0.0, 0.5, 0.0,
+        #                 0.0, 0.0, 0.5]
+        #
+        # gid_lim = 323
+        #
+        # for volume in self.all_fine_vols:
+        #     global_volume = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+        #     if global_volume <= gid_lim:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
+        #     else:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
 
         # # direcao x
         # gid1 = np.array([0, 0, 0])
@@ -4098,6 +4098,7 @@ class MsClassic_mono:
 
         print('tempo solucao direta')
         print(t2 - t1)
+        tempo_sol_direta = t2-t1
         # t2 = time.time()
         # print(' tempo Solucao direta')
         # print(t2-t1)
@@ -4146,8 +4147,12 @@ class MsClassic_mono:
 
         print('tempo solucao multiescala')
         print(t4-t3)
-        self.obter_grafico()
-        self.set_contorno()
+        tempo_sol_multiescala = t4-t3
+        with open('tempo_de_simulacao.txt', 'w') as arq:
+            arq.write('tempo_sol_direta:{0}\n'.format(tempo_sol_direta))
+            arq.write('tempo_sol_multiescala:{0}\n'.format(tempo_sol_multiescala))
+        #self.obter_grafico()
+        #self.set_contorno()
 
         # with open('comparacao_de_fluxos.txt', 'w') as arq:
         #
@@ -4209,7 +4214,7 @@ class MsClassic_mono:
         #
         # self.test_operadores()
         self.erro()
-        self.erro_2()
+        # self.erro_2()
         # #
         # # # self.erro_3()
         # # self.corretion_func()

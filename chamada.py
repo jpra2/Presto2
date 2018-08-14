@@ -18,9 +18,9 @@ l3 = [chamada4, chamada6]
 # os.chdir(principal)
 # os.system(chamada5)
 
-# for i in l3:
-#     os.system(i)
-os.system(chamada6)
+for i in l3:
+    os.system(i)
+# os.system(chamada6)
 
 
 
