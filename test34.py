@@ -23,7 +23,6 @@ class MsClassic_mono:
         self.root_set = self.mb.get_root_set()
         self.mesh_topo_util = topo_util.MeshTopoUtil(self.mb)
         self.create_tags(self.mb)
-
         self.all_fine_vols = self.mb.get_entities_by_dimension(self.root_set, 3)
         self.primals = self.mb.get_entities_by_type_and_tag(
             self.root_set, types.MBENTITYSET, np.array([self.primal_id_tag]),
@@ -396,22 +395,23 @@ class MsClassic_mono:
         x = Epetra.Vector(std_map)
 
         A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
-        A_np = np.zeros((len(elems), len(elems)))
-        b_np = np.zeros(len(elems))
+        # A_np = np.zeros((len(elems), len(elems)))
+        # b_np = np.zeros(len(elems))
 
         boundary_dirichlet = set(elems) & set(self.wells_d)
         boundary_neuman = set(elems) & set(self.wells_n)
-        boundary_collocation_points = (set(elems) & self.set_of_collocation_points_elems) - boundary
-        self.mb.tag_set_data(self.corretion_tag,
-                             boundary_collocation_points,
-                             np.repeat(0.0, len(boundary_collocation_points)))
+        boundary_collocation_points = (set(elems) & self.set_of_collocation_points_elems) - (boundary_dirichlet | boundary_neuman)
+        if len(boundary_collocation_points) > 0:
+            self.mb.tag_set_data(self.corretion_tag,
+                                 boundary_collocation_points,
+                                 np.repeat(0.0, len(boundary_collocation_points)))
 
         for elem in boundary_dirichlet | boundary_collocation_points:
              idx = id_map[elem]
              A.InsertGlobalValues(idx, [1], [idx])
              b[idx] = self.mb.tag_get_data(self.corretion_tag, elem, flat=True)[0]
-             A_np[idx, idx] = 1.0
-             b_np[idx] = self.mb.tag_get_data(self.corretion_tag, elem, flat=True)[0]
+             # A_np[idx, idx] = 1.0
+             # b_np[idx] = self.mb.tag_get_data(self.corretion_tag, elem, flat=True)[0]
 
         elems_ic = set(elems) - (boundary_dirichlet | boundary_collocation_points)
 
@@ -443,16 +443,15 @@ class MsClassic_mono:
             idx = id_map[elem]
             ids.append(idx)
             A.InsertGlobalValues(idx, values, ids)
-            A_np[idx, ids] = values[:]
+            # A_np[idx, ids] = values[:]
             if elem in boundary_neuman:
                 index = self.wells_n.index(elem)
                 if elem in self.wells_inj:
                     b[id_map[elem]] += self.wells_n[index]
-                    b_np[id_map[elem]] += self.wells_n[index]
+                    # b_np[id_map[elem]] += self.wells_n[index]
                 else:
                     b[id_map[elem]] -= self.wells_n[index]
-                    b_np[id_map[elem]] -= self.wells_n[index]
-
+                    # b_np[id_map[elem]] -= self.wells_n[index]
 
         A.FillComplete()
 
@@ -462,12 +461,101 @@ class MsClassic_mono:
         # AZ_last, AZ_summary, AZ_warnings
         solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
         solver.Iterate(1000, 1e-9)
-        x_np = np.linalg.solve(A_np, b_np)
-
-
+        # x_np = np.linalg.solve(A_np, b_np)
 
         self.mb.tag_set_data(self.corretion_tag, elems, np.asarray(x))
-        self.mb.tag_set_data(self.corretion_tag, boundary, np.repeat(0.0, len(boundary)))
+        self.mb.tag_set_data(self.corretion_tag, boundary_dirichlet, np.repeat(0.0, len(boundary_dirichlet)))
+
+    def calculate_local_problem_het_corretion_2(self, elems, lesser_dim_meshsets, corretion_tag):
+        #0
+        n = len(elems)
+        std_map = Epetra.Map(len(elems), 0, self.comm)
+        linear_vals = np.arange(0, len(elems))
+        id_map = dict(zip(elems, linear_vals))
+        boundary_elms = set()
+        b = Epetra.Vector(std_map)
+        x = Epetra.Vector(std_map)
+        A = Epetra.CrsMatrix(Epetra.Copy, std_map, 3)
+        A_np = np.zeros((n, n))
+        b_np = np.zeros(n)
+        l1 = []
+        l2 = []
+        for ms in lesser_dim_meshsets:
+            #1
+            lesser_dim_elems = self.mb.get_entities_by_handle(ms)
+            for elem in lesser_dim_elems:
+                #2
+                gid = self.mb.tag_get_data(self.global_id_tag, elem, flat=True)[0]
+                if elem in boundary_elms:
+                    continue
+                #2
+                boundary_elms.add(elem)
+                idx = id_map[elem]
+                A.InsertGlobalValues(idx, [1.0], [idx])
+                b[idx] = self.mb.tag_get_data(corretion_tag, elem, flat=True)[0]
+                A_np[idx, idx] = 1.0
+                b_np[idx] = self.mb.tag_get_data(corretion_tag, elem, flat=True)[0]
+        #0
+        for elem in (set(elems) ^ boundary_elms):
+            #1
+            gid = self.mb.tag_get_data(self.global_id_tag, elem, flat=True)[0]
+            if elem in self.wells_d:
+                #2
+                index = self.wells_d.index(elem)
+                A.InsertGlobalValues(id_map[elem], [1.0], [id_map[elem]])
+                p = A.ExtractGlobalRowCopy(id_map[elem])
+                b[id_map[elem]] = self.set_p[index]
+                A_np[id_map[elem], id_map[elem]] = 1.0
+                b_np[id_map[elem]] = self.set_p[index]
+                # print(p[0])
+                # print(p[1])
+                # print('gid')
+                # print(gid)
+                # import pdb; pdb.set_trace()
+                continue
+            #1
+            values, ids = self.mount_lines_2(elem, id_map)
+            A.InsertGlobalValues(id_map[elem], values, ids)
+            A_np[id_map[elem], ids] = values
+            if elem in self.wells_n:
+                index = self.wells_n.index(elem)
+                if elem in self.wells_inj:
+                    b[id_map[elem]] += self.set_q[index]
+                    b_np[id_map[elem]] += self.set_q[index]
+                else:
+                    b[id_map[elem]] += -self.set_q[index]
+                    b_np[id_map[elem]] += -self.set_q[index]
+            else:
+                pass
+        #0
+        # e = np.array(b)
+        # print(e)
+        # for i in range(len(elems)):
+        #     p = A.ExtractGlobalRowCopy(i)
+        #     print('aqui')
+        #     print('i')
+        #     print(i)
+        #     print('trilinos')
+        #     print(p[0])
+        #     print(p[1])
+        #     print('numpy')
+        #     print(A_np[i])
+        #     print('\n')
+        # import pdb; pdb.set_trace()
+        A.FillComplete()
+        linearProblem = Epetra.LinearProblem(A, x, b)
+        solver = AztecOO.AztecOO(linearProblem)
+        # AZ_last, AZ_summary, AZ_warnings
+        solver.SetAztecOption(AztecOO.AZ_output, AztecOO.AZ_warnings)
+        solver.Iterate(1000, 1e-9)
+
+        x2 = np.linalg.solve(A_np, b_np)
+        x1 = np.array(x)
+        dif = x2 - x1
+        # print(sum(dif))
+        # import pdb; pdb.set_trace()
+
+        self.mb.tag_set_data(corretion_tag, elems, np.asarray(x))
 
     def calculate_local_problem_het_corretion_gr(self, elems, lesser_dim_meshsets, col):
         #0
@@ -1345,6 +1433,7 @@ class MsClassic_mono:
         #0
         zeros = np.zeros(len(self.all_fine_vols))
         self.mb.tag_set_data(self.corretion_tag, self.all_fine_vols, zeros)
+        del zeros
         my_vols = set()
         # std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
         i = 0
@@ -1369,19 +1458,88 @@ class MsClassic_mono:
                 my_vols.add(elems__vol)
                 boundary = set(elems_vol) & set(self.wells)
 
-                if len(boundary) > 0:
-                    #3
-                    for volume in boundary & set(self.wells_d):
-                        index = self.wells_d.index(volume)
-                        p = self.set_p[index]
-                        self.mb.tag_set_data(self.corretion_tag, volume, p)
+                for volume in (boundary & set(self.wells_d)):
+                    index = self.wells_d.index(volume)
+                    p = self.set_p[index]
+                    self.mb.tag_set_data(self.corretion_tag, volume, p)
 
-                    self.calculate_local_problem_het_corretion(
-                        elems_vol, boundary)
+                self.calculate_local_problem_het_corretion(
+                    elems_vol, boundary)
+
+    def corretion_func_2(self):
+
+        zeros = np.zeros(len(self.all_fine_vols))
+
+        std_map = Epetra.Map(len(self.all_fine_vols), 0, self.comm)
+        self.tril_corretion = Epetra.CrsMatrix(Epetra.Copy, std_map, std_map, 0)
+
+        i = 0
+
+        my_pairs = set()
+
+        for collocation_point_set in self.sets:
+
+            i += 1
+
+            childs = self.mb.get_child_meshsets(collocation_point_set)
+            collocation_point = self.mb.get_entities_by_handle(collocation_point_set)[0]
+            primal_elem = self.mb.tag_get_data(self.fine_to_primal_tag, collocation_point,
+                                           flat=True)[0]
+            primal_id = self.mb.tag_get_data(self.primal_id_tag, int(primal_elem), flat=True)[0]
+
+            primal_id = self.ident_primal[primal_id]
+
+            corretion_tag = self.mb.tag_get_handle(
+                "CORRETION {0}".format(primal_id), 1, types.MB_TYPE_DOUBLE, True,
+                types.MB_TAG_SPARSE, default_value=0.0)
+
+            self.mb.tag_set_data(corretion_tag, self.all_fine_vols, zeros)
+
+            # self.mb.tag_set_data(support_vals_tag, collocation_point, 1.0)
+
+            for vol in childs:
+
+                elems_vol = self.mb.get_entities_by_handle(vol)
+                elems_dirichlet = set(self.wells_d) & set(elems_vol)
+                for elem in elems_dirichlet:
+                    index = self.wells_d.index(elem)
+                    self.mb.tag_set_data(corretion_tag, elem, self.set_p[index])
+                c_faces = self.mb.get_child_meshsets(vol)
+
+                for face in c_faces:
+                    elems_fac = self.mb.get_entities_by_handle(face)
+                    c_edges = self.mb.get_child_meshsets(face)
+
+                    for edge in c_edges:
+                        elems_edg = self.mb.get_entities_by_handle(edge)
+                        c_vertices = self.mb.get_child_meshsets(edge)
+                        # a partir desse ponto op de prolongamento eh preenchido
+                        self.calculate_local_problem_het_corretion_2(
+                            elems_edg, c_vertices, corretion_tag)
+
+                    self.calculate_local_problem_het_corretion_2(
+                        elems_fac, c_edges, corretion_tag)
+
+                   # print "support_val_tag" , mb.tag_get_data(support_vals_tag,elems_edg)
+                self.calculate_local_problem_het_corretion_2(
+                    elems_vol, c_faces, corretion_tag)
 
 
-                else:
-                    pass
+                vals = self.mb.tag_get_data(corretion_tag, elems_vol, flat=True)
+                gids = self.mb.tag_get_data(self.global_id_tag, elems_vol, flat=True)
+                primal_elems = self.mb.tag_get_data(self.fine_to_primal_tag, elems_vol,
+                                               flat=True)
+
+                for val, gid in zip(vals, gids):
+                    if (gid, primal_id) not in my_pairs:
+                        if val == 0.0:
+                            pass
+                        else:
+                            self.tril_corretion.InsertGlobalValues([gid], [primal_id], val)
+
+                        my_pairs.add((gid, primal_id))
+
+        #self.trilOP.FillComplete()
 
     def corretion_func_gr(self):
         #0
@@ -1608,9 +1766,9 @@ class MsClassic_mono:
 
     def create_tags(self, mb):
 
-        self.corretion_tag = self.mb.tag_get_handle(
-            "CORRETION", 1, types.MB_TYPE_DOUBLE, True,
-            types.MB_TAG_SPARSE, default_value=0.0)
+        # self.corretion_tag = self.mb.tag_get_handle(
+        #     "CORRETION", 1, types.MB_TYPE_DOUBLE, True,
+        #     types.MB_TAG_SPARSE, default_value=0.0)
 
         self.corretion2_tag = mb.tag_get_handle(
                         "CORRETION2", 1, types.MB_TYPE_DOUBLE,
@@ -1902,7 +2060,7 @@ class MsClassic_mono:
             global_id = self.mb.tag_get_data(self.global_id_tag, well, flat=True)[0]
             valor_da_prescricao = self.mb.tag_get_data(self.valor_da_prescricao_tag, well, flat=True)[0]
             tipo_de_prescricao = self.mb.tag_get_data(self.tipo_de_prescricao_tag, well, flat=True)[0]
-            centroid = self.mb.tag_get_data(self.centroid_tag, well, flat=True)
+            centroid = self.mesh_topo_util.get_average_position([well])
             #raio_do_poco = self.mb.tag_get_data(self.raio_do_poco_tag, well, flat=True)[0]
             tipo_de_poco = self.mb.tag_get_data(self.tipo_de_poco_tag, well, flat=True)[0]
             #tipo_de_fluido = self.mb.tag_get_data(self.tipo_de_fluido_tag, well, flat=True)[0]
@@ -1913,6 +2071,7 @@ class MsClassic_mono:
             else:
                 wells_n.append(well)
                 set_q.append(valor_da_prescricao)
+
             if tipo_de_poco == 1:
                 wells_inj.append(well)
             else:
@@ -2112,7 +2271,7 @@ class MsClassic_mono:
                 kadj = np.dot(np.dot(kadj,uni),uni)
                 keq = self.kequiv(kvol, kadj)
                 # keq = self.funcoes[1](kvol, kadj)
-                keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                keq = keq*(np.dot(self.A, uni))/(self.mi*abs(np.dot(direction, uni)))
                 temp_ids.append(map_id[adj])
                 temp_k.append(-keq)
                 kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
@@ -3341,7 +3500,7 @@ class MsClassic_mono:
                 kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 kadj = np.dot(np.dot(kadj,uni),uni)
                 keq = self.kequiv(kvol, kadj)
-                keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                keq = keq*(np.dot(self.A, uni))/(self.mi*abs(np.dot(direction, uni)))
                 if z == 1.0:
                     #3
                     keq2 = keq*self.gama
@@ -3381,12 +3540,12 @@ class MsClassic_mono:
             soma3 = 0.0
             temp_glob_adj = []
             temp_k = []
-            volume_centroid = self.mb.tag_get_data(self.centroid_tag, volume, flat=True)
+            volume_centroid = self.mesh_topo_util.get_average_position([volume])
             adj_volumes = self.mesh_topo_util.get_bridge_adjacencies(volume, 2, 3)
             kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
             for adj in adj_volumes:
                 #2
-                adj_centroid = self.mb.tag_get_data(self.centroid_tag, adj, flat=True)
+                adj_centroid = self.mesh_topo_util.get_average_position([adj])
                 direction = adj_centroid - volume_centroid
                 altura = adj_centroid[2]
                 uni = self.unitary(direction)
@@ -3395,7 +3554,7 @@ class MsClassic_mono:
                 kadj = self.mb.tag_get_data(self.perm_tag, adj).reshape([3, 3])
                 kadj = np.dot(np.dot(kadj,uni),uni)
                 keq = self.kequiv(kvol, kadj)
-                keq = keq*(np.dot(self.A, uni))/(self.mi*np.dot(self.h, uni))
+                keq = keq*(np.dot(self.A, uni))/(self.mi*abs(np.dot(direction, uni)))
                 if z == 1.0:
                     #3
                     keq2 = keq*self.gama
@@ -3584,7 +3743,7 @@ class MsClassic_mono:
         perms = []
         perm_tensor = [1.0, 0.0, 0.0,
                         0.0, 1.0, 0.0,
-                        0.0, 0.0, 1.0]
+                        0.0, 0.0, 10.0]
 
         for elem in self.all_fine_vols:
             self.mb.tag_set_data(self.perm_tag, elem, perm_tensor)
@@ -3678,6 +3837,79 @@ class MsClassic_mono:
         #     else:
         #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
         #         self.mb.tag_set_data(self.k_tag, volume, k2)
+
+        # sudo docker pull padmec/elliptic:1.0
+        # k3 = 100.0
+        # perm_tensor_3 = [100.0, 0.0, 0.0,
+        #                  0.0, 100.0, 0.0,
+        #                  0.0, 0.0, 100.0]
+        #
+        # k1 = 1.0
+        # perm_tensor_1 = [1.0, 0.0, 0.0,
+        #                  0.0, 1.0, 0.0,
+        #                  0.0, 0.0, 1.0]
+        #
+        # k2 = 10.0
+        # perm_tensor_2 = [k2, 0.0, 0.0,
+        #                  0.0, k2, 0.0,
+        #                  0.0, 0.0, k2]
+        #
+        # k4 = 1000.0
+        # perm_tensor_4 = [k4, 0.0, 0.0,
+        #                  0.0, k4, 0.0,
+        #                  0.0, 0.0, k4]
+        #
+        # gid1 = np.array([0, 0, 0])
+        # gid2 = np.array([14, 29, 14])
+        # dif = gid2 - gid1 + np.array([1, 1, 1])
+        #
+        # gids1 = []
+        # for k in range(dif[2]):
+        #     for j in range(dif[1]):
+        #         for i in range(dif[0]):
+        #             gid = gid1 + np.array([i, j, k])
+        #             gid = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
+        #             gids1.append(gid)
+        #
+        # gid1 = np.array([15, 0, 0])
+        # gid2 = np.array([29, 29, 14])
+        # dif = gid2 - gid1 + np.array([1, 1, 1])
+        #
+        # gids2 = []
+        # for k in range(dif[2]):
+        #     for j in range(dif[1]):
+        #         for i in range(dif[0]):
+        #             gid = gid1 + np.array([i, j, k])
+        #             gid = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
+        #             gids2.append(gid)
+        #
+        # gid1 = np.array([0, 0, 14])
+        # gid2 = np.array([14, 29, 29])
+        # dif = gid2 - gid1 + np.array([1, 1, 1])
+        #
+        # gids3 = []
+        # for k in range(dif[2]):
+        #     for j in range(dif[1]):
+        #         for i in range(dif[0]):
+        #             gid = gid1 + np.array([i, j, k])
+        #             gid = gid[0] + gid[1]*self.nx + gid[2]*self.nx*self.ny
+        #             gids3.append(gid)
+        #
+        #
+        # for volume in self.all_fine_vols:
+        #     gid_vol = self.mb.tag_get_data(self.global_id_tag, volume, flat = True)[0]
+        #     if gid_vol in gids1:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_1)
+        #         self.mb.tag_set_data(self.k_tag, volume, k1)
+        #     elif gid_vol in gids2:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_2)
+        #         self.mb.tag_set_data(self.k_tag, volume, k2)
+        #     elif gid_vol in gids3:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_3)
+        #         self.mb.tag_set_data(self.k_tag, volume, k3)
+        #     else:
+        #         self.mb.tag_set_data(self.perm_tag, volume, perm_tensor_4)
+        #         self.mb.tag_set_data(self.k_tag, volume, k4)
 
 
 
@@ -4056,7 +4288,7 @@ class MsClassic_mono:
         eliminacao das linhas e colunas dos volumes com pressao prescrita
         """
         #0
-        # self.set_contorno()
+        self.set_contorno()
         lim = 10**(-7)
         t1 = time.time()
         if self.flag_grav == 0:
@@ -4084,12 +4316,13 @@ class MsClassic_mono:
         del self.Pf
         self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf_all))
         del self.Pf_all
-
+        #self.create_flux_vector_pf()
         # self.set_global_problem_vf()
         # self.Pf = self.solve_linear_problem(self.trans_fine2, self.b2, self.nf)
         # self.mb.tag_set_data(self.pf_tag, self.all_fine_vols, np.asarray(self.Pf))
 
-        self.create_flux_vector_pf()
+
+
         # import pdb; pdb.set_trace()
         t2 = time.time()
         # self.set_global_problem_vf()
@@ -4109,6 +4342,7 @@ class MsClassic_mono:
 
             self.calculate_restriction_op_2()
             self.calculate_prolongation_op_het()
+            # self.corretion_func_2()
             self.organize_op()
             #self.save_ops()
 
@@ -4135,11 +4369,14 @@ class MsClassic_mono:
         # #print(self.vect_gr)
         self.mb.tag_set_data(self.pms_tag, self.all_fine_vols, np.asarray(self.Pms_all))
         del self.Pms_all
+        #self.corretion_func()
 
         self.test_conservation_coarse()
         self.Neuman_problem_6()
         self.create_flux_vector_pms()
+
         t4 = time.time()
+        self.erro()
         # print(' tempo Solucao Multiescala')
         # print(t3-t2)
         # print('\n')
@@ -4153,6 +4390,9 @@ class MsClassic_mono:
             arq.write('tempo_sol_multiescala:{0}\n'.format(tempo_sol_multiescala))
         #self.obter_grafico()
         #self.set_contorno()
+
+
+
 
         # with open('comparacao_de_fluxos.txt', 'w') as arq:
         #
@@ -4213,7 +4453,6 @@ class MsClassic_mono:
         #
         #
         # self.test_operadores()
-        self.erro()
         # self.erro_2()
         # #
         # # # self.erro_3()

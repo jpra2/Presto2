@@ -1,8 +1,9 @@
+
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-caminho2 = '/home/joao/run/back2_sol_direta/Presto2/backup_simulacoes/bifasico/pasta11'
+caminho2 = '/home/joao/run/back2_multiescala/Presto2/simulacoes/bifasico'
 caminho1 = '/home/joao/run/back2_sol_direta/Presto2/simulacoes/bifasico'
 arquivo1 = 'fluxo_multiescala_bif'
 arquivo2 = 'fluxo_malha_fina_bif'
@@ -15,7 +16,7 @@ t = 'tempo'
 po = 'prod_o'
 pw = 'prod_w'
 
-os.chdir(caminho1)
+os.chdir(caminho2)
 
 prod_o = []
 prod_o_ms = []
@@ -23,13 +24,13 @@ tempo = []
 tempo_ms = []
 prod_w_ms = []
 prod_w = []
-loops = 80
+loops = 194
 continuar = True
 cont = 0
 
 # Multiescala
 
-while(continuar):
+while(cont <= loops):
     arquivo = arquivo3 + str(cont) + '.txt'
 
     with open(arquivo, 'r') as arq:
@@ -48,8 +49,7 @@ while(continuar):
             pass
 
     cont += 1
-    if cont >= loops:
-        continuar = False
+
 
 
 prod_w_ms = np.array(prod_w_ms)
@@ -68,14 +68,15 @@ for i in range(len(prod_o_ms)):
 
 
 
-########################################################
+
+#######################################################
 # Solucao direta
 
-os.chdir(caminho2)
+os.chdir(caminho1)
 continuar = True
 cont = 0
 
-while(continuar):
+while(cont <= loops):
     arquivo = arquivo3 + str(cont) + '.txt'
 
     with open(arquivo, 'r') as arq:
@@ -94,8 +95,7 @@ while(continuar):
             pass
 
     cont += 1
-    if cont >= loops:
-        continuar = False
+
 
 
 prod_w = np.array(prod_w)

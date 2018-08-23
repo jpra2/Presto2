@@ -10,7 +10,6 @@ import os
 import random
 
 
-
 class Msclassic_bif:
 
     def __init__(self):
@@ -50,7 +49,6 @@ class Msclassic_bif:
         self.gama_w = 1.0 #  peso especifico da agua
         self.gama_o = 0.98 # peso especifico do oleo
         self.gama_ = self.gama_w + self.gama_o
-
 
         self.Swi = 0.2 # saturacao inicial para escoamento da agua
         self.Swc = 0.2 # saturacao de agua conata
@@ -2796,7 +2794,7 @@ class Msclassic_bif:
                          0.0, 0.0, 0.5]
 
         gid1 = np.array([0, 0, 0])
-        gid2 = np.array([int((self.nx - 1)/2.0), int(self.ny), int(self.nz)])
+        gid2 = np.array([int((self.nx - 1)/2.0), int(self.ny-1), int(self.nz-1)])
         dif = gid2 - gid1 + np.array([1, 1, 1])
 
         gids = []
@@ -3275,6 +3273,7 @@ class Msclassic_bif:
         self.set_lamb_2()
         self.set_global_problem_vf_2()
 
+
         ####################################
         # Solucao direta
         t1 = time.time()
@@ -3317,7 +3316,8 @@ class Msclassic_bif:
         t4 = time.time()
         self.erro_2()
 
-        tempo_sol_multiescala = t3-t4
+
+        tempo_sol_multiescala = t4-t3
         print('tempo_sol_multiescala:{0}'.format(t3-t4))
 
         with open('tempo_de_simulacao_loop{0}.txt'.format(self.loop), 'w') as arq:
@@ -3347,6 +3347,8 @@ class Msclassic_bif:
 
 
         self.mb.write_file('new_out_bif{0}.vtk'.format(self.loop))
+
+
         # arquivo = os.path.join(self.principal, 'new_out_bif{0}.vtk'.format(self.loop))
         # shutil.copy(arquivo, self.caminho1)
         # os.unlink(arquivo)
