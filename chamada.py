@@ -3,8 +3,6 @@ import os
 # print(platform.system())
 # print(platform.release())
 
-
-
 principal = '/home/joao/git/back2/Presto2'
 
 chamada1 = 'sudo systemctl start docker'

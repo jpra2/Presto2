@@ -1,7 +1,0 @@
-permeabilidade homogenea = 1
-gradiente de pressao em xy
-sem gravidade
-bifasico
-
-p = 1  em x,y = 0
-p = 0 em x,y = 24
