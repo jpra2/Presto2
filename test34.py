@@ -87,12 +87,12 @@ class MsClassic_mono:
             self.map_vols_ic_2 = dict(zip(range(len(self.all_fine_vols_ic)), list(self.all_fine_vols_ic)))
             self.nf_ic = len(self.all_fine_vols_ic)
 
-            self.run_2()
+            # self.run_2()
 
-
-    funcoes = [lambda x: (x/np.linalg.norm(x))*(x/np.linalg.norm(x)), # unitario positivo na direcao de x
-               lambda k1, k2: (2*k1*k2)/(k1+k2) # retorna a permeabilidade equivalente
-               ]
+    funcoes = [
+       lambda x: (x/np.linalg.norm(x))*(x/np.linalg.norm(x)), # unitario positivo na direcao de x
+       lambda k1, k2: (2*k1*k2)/(k1+k2) # retorna a permeabilidade equivalente
+    ]
 
     def add_gr(self):
 
@@ -1657,7 +1657,6 @@ class MsClassic_mono:
         t2 = time.time()
         # import pdb; pdb.set_trace()
 
-
     def create_flux_vector_pms(self):
         """
         cria um vetor para armazenar os fluxos em cada volume da malha fina
@@ -1761,8 +1760,6 @@ class MsClassic_mono:
             arq.write('\n')
             arq.write('soma_inj:{0}\n'.format(soma_inj))
             arq.write('soma_prod:{0}\n'.format(soma_prod))
-
-
 
     def create_tags(self, mb):
 
@@ -1890,7 +1887,6 @@ class MsClassic_mono:
         self.gama_tag = mb.tag_get_handle("GAMA")
         self.rho_tag = mb.tag_get_handle("RHO")
         self.mi_tag = mb.tag_get_handle("MI")
-
 
     def erro(self):
         for volume in self.all_fine_vols:
@@ -3509,6 +3505,7 @@ class MsClassic_mono:
                 #2
                 temp_glob_adj.append(self.map_vols_ic[adj])
                 temp_k.append(-keq)
+                kvol = self.mb.tag_get_data(self.perm_tag, volume).reshape([3, 3])
             #1
             soma2 = soma2*(self.tz-volume_centroid[2])
             soma2 = -(soma2 + soma3)
@@ -3941,9 +3938,6 @@ class MsClassic_mono:
         #     self.mb.tag_set_data(self.perm_tag, elem, perms[i])
         #     i += 1
 
-
-
-
     def set_perm_2(self):
         """
         seta a permeabilidade dos volumes da malha fina
@@ -4030,7 +4024,6 @@ class MsClassic_mono:
         #     print(gids)
         #     import pdb; pdb.set_trace()
 
-
     def solve_linear_problem(self, A, b, n):
 
         std_map = Epetra.Map(n, 0, self.comm)
@@ -4101,8 +4094,6 @@ class MsClassic_mono:
             arq.write('\n')
             arq.write('sum Qc:{0}'.format(sum(Qc2)))
 
-
-
     def test_operadores(self):
         mat = np.load('operadores.npz')
         OP = mat['OP']
@@ -4110,8 +4101,6 @@ class MsClassic_mono:
         for i in OP:
             print(sum(i))
             # import pdb; pdb.set_trace()
-
-
 
     def unitary(self,l):
         """
@@ -4222,7 +4211,6 @@ class MsClassic_mono:
         with open('grafico.txt', 'w') as arq:
             for i in range(len(pf)):
                 arq.write('{0},{1},{2},{3}\n'.format(pos[i], pf[i], pms[i], erro[i]))
-
 
     def run(self):
         """
